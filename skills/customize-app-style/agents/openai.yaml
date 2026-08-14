@@ -1,0 +1,4 @@
+interface:
+  display_name: "APP 样式定制"
+  short_description: "由 AI 安全定制跨端应用的主题、背景、排版与组件视觉"
+  default_prompt: "使用 $customize-app-style 为应用设计并应用一套完整的个性化样式。"

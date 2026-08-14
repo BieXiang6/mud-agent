@@ -1,0 +1,29 @@
+{
+  "name": "MudAgent TCP",
+  "id": "MudAgent-TCP",
+  "version": "1.0.0",
+  "description": "后台线程 TCP 客户端，支持 GBK 收发和持续接收回调",
+  "_dp_type": "nativeplugin",
+  "_dp_nativeplugin": {
+    "android": {
+      "plugins": [
+        {
+          "type": "module",
+          "name": "MudAgent-TCP",
+          "class": "com.mudagent.tcp.MudTcpModule"
+        }
+      ],
+      "integrateType": "jar",
+      "compileOptions": {
+        "sourceCompatibility": "1.8",
+        "targetCompatibility": "1.8"
+      },
+      "minSdkVersion": 21,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.WAKE_LOCK"
+      ]
+    }
+  }
+}

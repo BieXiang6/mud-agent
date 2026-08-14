@@ -1,0 +1,4 @@
+interface:
+  display_name: "游戏 JS 脚本"
+  short_description: "编写、保存并运行可监听和操作游戏的受限 JavaScript 脚本"
+  default_prompt: "使用 $write-game-script 编写并保存一个可复用的游戏自动化脚本。"

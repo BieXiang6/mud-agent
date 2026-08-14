@@ -1,0 +1,11 @@
+/node_modules/
+/dist/
+/release/
+/unpackage/
+/build/
+/nativeplugins/MudAgent-TCP/android/libs/*.jar
+
+# Local environment and credentials. Keep only the public template tracked.
+.env
+.env.*
+!.env.example

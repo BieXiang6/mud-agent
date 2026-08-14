@@ -1,0 +1,74 @@
+{
+	"pages": [
+		{
+			"path": "pages/login/login",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "这是江湖智能体",
+				"disableScroll": true,
+				"app-plus": {
+					"bounce": "none"
+				}
+			}
+		},
+		{
+			"path": "pages/login-accounts/login-accounts",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "切换账号",
+				"app-plus": { "bounce": "none" }
+			}
+		},
+		{
+			"path": "pages/game/game",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "这是江湖智能体",
+				"disableScroll": true,
+				"app-plus": {
+					"bounce": "none"
+				}
+			}
+		},
+		{
+			"path": "pages/ai-settings/ai-settings",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "模型设置",
+				"app-plus": { "bounce": "none" }
+			}
+		},
+		{
+			"path": "pages/ai-skills/ai-skills",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "Skills",
+				"app-plus": { "bounce": "none" }
+			}
+		},
+		{
+			"path": "pages/ai-scripts/ai-scripts",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "游戏脚本",
+				"app-plus": { "bounce": "none" }
+			}
+		},
+		{
+			"path": "pages/ai-guide/ai-guide",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "AI 使用教程",
+				"app-plus": { "bounce": "none" }
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTextStyle": "white",
+		"navigationBarTitleText": "这是江湖智能体",
+		"navigationBarBackgroundColor": "#000000",
+		"backgroundColor": "#000000",
+		"backgroundTextStyle": "dark"
+	},
+	"uniIdRouter": {}
+}
