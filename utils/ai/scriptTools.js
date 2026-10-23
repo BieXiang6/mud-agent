@@ -1,5 +1,6 @@
-import { cancelScriptRun, getScriptRun, runStoredScript, validateScriptSource } from './scriptRuntime.js'
+import { cancelScriptRun, compileScript, getScriptRun, runStoredScript } from './scriptRuntime.js'
 import { deleteStoredScript, getStoredScript, listStoredScripts, saveStoredScript, scriptStoreLimits } from './scriptStore.js'
+import { applyScriptEdits } from './scriptEditing.js'
 
 function objectSchema(properties, required = []) {
   return { type: 'object', properties, required, additionalProperties: false }
@@ -12,7 +13,7 @@ function success(data) {
 const emptySchema = objectSchema({})
 const scriptKey = { type: 'string', minLength: 1, maxLength: 100, description: '脚本 ID；也可使用唯一脚本名称' }
 
-export function createScriptTools() {
+export function createScriptTools(session) {
   return [
     {
       name: 'list_game_scripts',
@@ -25,19 +26,56 @@ export function createScriptTools() {
     {
       name: 'get_game_script',
       label: '读取游戏脚本',
-      description: '按 ID 或名称读取一个已保存脚本的完整源码。修改或执行前先读取。',
-      parameters: objectSchema({ scriptId: scriptKey }, ['scriptId']),
+      description: '读取脚本及版本 updatedAt。可用 startLine/endLine 只读取指定行段（从 1 开始、包含结束行），lineNumbers=true 附带行号视图。修改前先读取，局部修改优先使用 edit_game_script。',
+      parameters: objectSchema({
+        scriptId: scriptKey,
+        startLine: { type: 'integer', minimum: 1 },
+        endLine: { type: 'integer', minimum: 1 },
+        lineNumbers: { type: 'boolean', description: '附带 numberedSource；编辑 oldText 时不要包含显示行号' }
+      }, ['scriptId']),
       executionMode: 'sequential',
       execute: async (_id, params) => {
         const script = getStoredScript(params.scriptId)
         if (!script) throw new Error('脚本不存在：' + params.scriptId)
-        return success(script)
+        const newline = script.source.includes('\r\n') ? '\r\n' : '\n'
+        const lines = script.source.split(newline)
+        const startLine = params.startLine == null ? 1 : params.startLine
+        const endLine = params.endLine == null ? lines.length : params.endLine
+        if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine > lines.length) throw new Error('读取行范围无效，共 ' + lines.length + ' 行')
+        const source = lines.slice(startLine - 1, endLine).join(newline)
+        return success({ ...script, source, startLine, endLine, totalLines: lines.length,
+          ...(params.lineNumbers ? { numberedSource: lines.slice(startLine - 1, endLine).map((line, index) => (startLine + index) + ': ' + line).join('\n') } : {}) })
+      }
+    },
+    {
+      name: 'edit_game_script',
+      label: '局部修改游戏脚本',
+      description: '修改已有脚本，无需重传完整源码。提供读取到的 updatedAt 作为 expectedUpdatedAt。edits 按顺序作用于前一处修改后的内容；默认 oldText 必须精确且唯一匹配。指定 startLine/endLine 则替换完整行并校验 oldText；插入时 endLine=startLine-1、oldText=""；newText="" 表示删除。任一失败整批不保存。成功仅返回版本和变更摘要，需要查看时按行读取。',
+      parameters: objectSchema({
+        scriptId: scriptKey,
+        expectedUpdatedAt: { type: 'integer', minimum: 0 },
+        edits: { type: 'array', minItems: 1, maxItems: 50, items: objectSchema({
+          oldText: { type: 'string', maxLength: scriptStoreLimits.maxSourceChars },
+          newText: { type: 'string', maxLength: scriptStoreLimits.maxSourceChars },
+          startLine: { type: 'integer', minimum: 1 },
+          endLine: { type: 'integer', minimum: 0 }
+        }, ['oldText', 'newText']) }
+      }, ['scriptId', 'expectedUpdatedAt', 'edits']),
+      executionMode: 'sequential',
+      execute: async (_id, params) => {
+        const script = getStoredScript(params.scriptId)
+        if (!script) throw new Error('脚本不存在：' + params.scriptId)
+        if (!Number.isInteger(params.expectedUpdatedAt) || params.expectedUpdatedAt !== script.updatedAt) throw new Error('脚本已被修改或缺少版本，请重新读取后再编辑')
+        const result = applyScriptEdits(script.source, params.edits)
+        compileScript(result.source)
+        const { source, ...saved } = saveStoredScript({ ...script, source: result.source, expectedUpdatedAt: params.expectedUpdatedAt })
+        return success({ saved: { ...saved, sourceLength: source.length, totalLines: source.split('\n').length }, changes: result.changes })
       }
     },
     {
       name: 'save_game_script',
       label: '保存游戏脚本',
-      description: '新建或更新可复用的受限 JavaScript 游戏脚本。源码必须通过 exports.<函数名> 导出函数。更新时提供 scriptId 和 expectedUpdatedAt，避免覆盖并发修改。',
+      description: '新建或完整重写可复用的受限 JavaScript 游戏脚本；已有脚本的小范围调整优先使用 edit_game_script。源码必须通过 exports.<函数名> 导出函数。更新时提供 scriptId 和 expectedUpdatedAt，避免覆盖并发修改。',
       parameters: objectSchema({
         scriptId: { type: 'string', maxLength: 100 },
         name: { type: 'string', minLength: 1, maxLength: 80 },
@@ -47,7 +85,7 @@ export function createScriptTools() {
       }, ['name', 'source']),
       executionMode: 'sequential',
       execute: async (_id, params) => {
-        validateScriptSource(params.source)
+        compileScript(params.source)
         return success({ saved: saveStoredScript({ ...params, id: params.scriptId }) })
       }
     },
@@ -70,11 +108,10 @@ export function createScriptTools() {
         scriptId: scriptKey,
         functionName: { type: 'string', pattern: '^[A-Za-z_$][A-Za-z0-9_$]{0,79}$', description: '默认 main' },
         args: { type: 'array', items: {}, maxItems: 20, description: '按位置传给函数的 JSON 参数数组' },
-        waitForResult: { type: 'boolean', description: '默认 true；false 为非阻塞执行' },
-        timeoutMs: { type: 'integer', minimum: 200, maximum: 600000 }
+        waitForResult: { type: 'boolean', description: '默认 true；false 为非阻塞执行。运行不会自动超时，需用 cancel_script_run 主动停止。' }
       }, ['scriptId']),
       executionMode: 'sequential',
-      execute: async (_id, params) => success(await runStoredScript(params))
+      execute: async (_id, params, signal) => success(await runStoredScript({ ...params, signal, origin: 'agent', session }))
     },
     {
       name: 'get_script_run',
@@ -82,7 +119,7 @@ export function createScriptTools() {
       description: '查询非阻塞脚本运行的状态、日志、返回值或错误。',
       parameters: objectSchema({ runId: { type: 'string', minLength: 1, maxLength: 100 } }, ['runId']),
       executionMode: 'sequential',
-      execute: async (_id, params) => success(getScriptRun(params.runId))
+      execute: async (_id, params) => success(getScriptRun(params.runId, session && session.gameState.sessionId))
     },
     {
       name: 'cancel_script_run',
@@ -90,7 +127,7 @@ export function createScriptTools() {
       description: '停止仍在排队或运行的非阻塞脚本。',
       parameters: objectSchema({ runId: { type: 'string', minLength: 1, maxLength: 100 } }, ['runId']),
       executionMode: 'sequential',
-      execute: async (_id, params) => success(cancelScriptRun(params.runId))
+      execute: async (_id, params) => success(cancelScriptRun(params.runId, session && session.gameState.sessionId))
     }
   ]
 }

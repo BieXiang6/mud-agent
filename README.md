@@ -2,17 +2,17 @@
 
 这是一个面向中文 MUD 游戏的跨平台客户端，在传统文字游戏界面上集成了 AI Agent、可复用游戏脚本、多模型配置和界面定制能力。
 
-项目使用 uni-app + Vue 3 构建移动端界面，同时提供 Electron Windows 桌面版。客户端不依赖 WebSocket 代理，可以通过原生 TCP 直接连接兼容的 MUD 服务端，并处理 GBK/GB2312 编码及项目约定的游戏协议。
+项目使用 uni-app + Vue 3 构建移动端界面，同时提供 Electron Windows 桌面版。客户端不依赖 WebSocket 代理，可以通过原生 TCP 直接连接兼容的 MUD 服务端，并处理 GBK/GB2312、UTF-8 编码及项目约定的游戏协议。
 
 ## 主要功能
 
 ### MUD 游戏客户端
 
 - 通过 TCP 直连游戏服务器，支持自定义服务器地址和端口。
-- 支持 GBK/GB2312 收发、粘包/拆包处理和按行协议解析。
+- 支持在登录页选择 GBK/GB2312 或 UTF-8 收发、粘包/拆包处理和按行协议解析。
 - 展示主输出、聊天、房间标题、出口、场景对象、状态栏、动作按钮和交互弹窗。
 - 支持文本指令、快捷操作、自定义按钮、角色创建和断线状态处理。
-- 支持自动登录、详细网络日志和最多 8 组常用登录配置。
+- 支持自动登录、详细网络日志和不限条数的常用登录配置；完整登录参数参与去重，同账号不同区服可分别保存。
 - Android 端支持后台连接、唤醒锁以及原生 TCP 插件。
 
 ### AI 智能体
@@ -21,6 +21,7 @@
 - 支持配置多个模型服务，包括 API Key、Base URL、模型 ID、上下文窗口和最大输出 Token。
 - AI 可以读取游戏区域、观察事件、执行界面动作和发送游戏指令。
 - 每个 AI 任务拥有独立对话上下文，并支持任务历史恢复。
+- 支持添加文本和源码附件（包括 `.cs`、任意代码扩展名及无扩展名文件），内容会随用户消息保存并提供给智能体读取。
 - 上下文达到阈值时自动生成摘要，保留近期对话继续执行。
 - 支持指令黑名单，限制 AI 发送危险或不希望执行的游戏命令。
 
@@ -29,6 +30,11 @@
 - 内置按需加载的 AI Skills，避免无关工具长期占用模型上下文。
 - 支持导入、启停和删除自定义 `SKILL.md`。
 - AI 可以创建、保存、运行、查询和取消受限的 JavaScript 游戏脚本。
+- 最多同时登录 5 个游戏账号；长按游戏页“快捷”按钮打开账号列表，直接切换、断开或登录其他账号。后台账号继续收包，各账号画面、弹窗与脚本运行相互独立。
+- 每个账号拥有独立的智能体、当前对话、输入草稿和任务列表，最多 5 个账号的智能体可同时工作。切换账号不停止后台任务；停止或断开只影响对应账号。脚本库与模型配置继续共享。
+- AI 可按行读取脚本，通过 `edit_game_script` 精确替换片段、增删行段或批量局部修改；校验版本、旧内容、语法和脚本限制后整批保存，无需重传完整源码。
+- 支持将当前选中的游戏脚本导出为单脚本 JSON 包，并通过校验后单独导入。
+- 脚本运行控制窗口统一显示手动及智能体启动的运行，可查看状态并随时终止。
 - 脚本运行在隔离容器中，不能访问 Node.js、DOM、网络、存储或任意系统 API。
 - 支持事件监听、等待游戏区域变化和非阻塞脚本任务。
 
@@ -54,7 +60,7 @@
 | 构建工具 | Vite 5、DCloud uni-app CLI |
 | 桌面端 | Electron 41、Electron Builder、NSIS |
 | Android 网络 | uni-app 原生插件、`plus.android`、Java Socket |
-| 网络协议 | TCP、HTTP、GBK/GB2312、自定义 MUD 行协议 |
+| 网络协议 | TCP、HTTP、GBK/GB2312、UTF-8、自定义 MUD 行协议 |
 | AI Agent | `@earendil-works/pi-agent-core`、`@earendil-works/pi-ai` |
 | Schema | TypeBox |
 | 服务端 | Node.js 原生 HTTP Server |
@@ -110,7 +116,7 @@ TCP 插件 JAR 属于构建产物，不提交到 Git。首次制作 Android 自�
 克隆项目后进入项目目录：
 
 ```bash
-git clone <你的仓库地址>
+git clone https://github.com/BieXiang6/mud-agent.git
 cd mud-agent
 npm install
 ```
@@ -222,10 +228,20 @@ npm run server
 | `GET /health` | 健康检查 |
 | `GET /api/version/latest` | 获取最新版本信息 |
 | `GET /api/announcements/latest` | 获取最新公告 |
+| `GET /api/market/items` | 浏览、搜索 Skill 与脚本市场 |
+| `GET /api/market/items/:id` | 查看或下载市场内容 |
+| `POST /api/market/items`、`PUT /api/market/items/:id` | 上传、原作者更新内容 |
+| `DELETE /api/market/items/:id` | 作者删除自己的内容；昵称“想都别想”可删除全部内容 |
 
 版本和公告内容保存在 `server/release-data.json`。服务会在每次请求时读取该文件，因此修改发布内容后不需要重启。
 
 生产环境建议在发布服务前配置 HTTPS 反向代理，并根据部署范围设置防火墙和访问策略。
+
+### Skill 与脚本市场
+
+从客户端 Skills 或游戏脚本页进入市场，可以挑选、预览、下载及上传本机内容。市场显示名字、描述、作者昵称、版本和更新日期。首次输入唯一昵称后由服务器签发私密签名，绑定游戏账号名，不绑定游戏服务器 IP 或区服。
+
+新客户端使用已有昵称时，必须从旧客户端“导出私密签名”并在新客户端导入，不能仅凭昵称重新领取签名。持有原签名可继续更新该昵称发布的内容。管理员用 `block` / `unblock <昵称>` 管理昵称权限，或用 `block-account` / `unblock-account <游戏账号>` 管理账号下所有昵称。部署、签名迁移及接口细节见 [市场服务说明](server/MARKETPLACE.md)。
 
 ## AI 模型配置
 
@@ -265,7 +281,7 @@ mud-agent/
 关键模块：
 
 - `utils/config.js`：客户端环境配置统一入口。
-- `utils/net.js`：TCP 连接、收发、GBK 编解码和消息分帧。
+- `utils/net.js`：TCP 连接、收发、GBK/UTF-8 编解码和消息分帧。
 - `utils/proto.js`：游戏协议解析与状态更新。
 - `utils/platform/`：uni-app 与 Electron 运行时适配。
 - `utils/ai/controller.js`：AI Agent 生命周期、模型调用和任务管理。
@@ -282,7 +298,10 @@ mud-agent/
 | `npm run build:electron:dir` | 生成 Windows 免安装目录 |
 | `npm run build:electron` | 生成 Windows NSIS 安装程序 |
 | `npm run test:electron:quick` | 对已生成的 Electron renderer 执行快速冒烟测试 |
+| `npm run test:electron:accounts` | 用模拟服务器验证五账号登录、鼠标与触屏长按、后台收包、切换和单账号断开 |
+| `npm run test:electron:agents` | 使用模拟模型接口验证五个真实智能体并发、后台工具调用及账号对话与任务隔离 |
 | `npm run server` | 启动版本与公告服务 |
+| `npm run test:electron:market` | 使用 dist/verification-h5 验证市场浏览、上传、作者更新、下载和禁用上传 |
 | `npm run generate:skills` | 根据 Skills 源文件重新生成内置 Skill 数据 |
 | `npm run check:skills` | 检查生成的内置 Skill 数据是否最新 |
 
@@ -310,6 +329,10 @@ npm run build:electron:dir
 ```
 
 `npm run test:electron:quick` 会读取 `dist/electron-app/renderer/`，因此应先执行一次 Electron 构建或开发运行命令。
+
+`npm run test:electron:accounts` 使用同一构建目录与隔离的内存存储，不连接真实游戏服务器。可用 `npm run test:electron:accounts -- <renderer/index.html>` 指定其他 H5 构建文件。
+
+`npm run test:electron:agents` 复用上述隔离环境，同时模拟模型流式响应，不调用真实模型接口。账号历史按服务器地址、端口和账号分别存储；旧版无法确定所属账号的共享历史会保留在原存储中，不自动复制到任何账号。
 
 ## 日志与排障
 
@@ -346,9 +369,9 @@ npm run build:electron:dir
 - 清理 Git 历史中的敏感值，或者从当前干净工作树创建新仓库。
 - 检查 `server/release-data.json` 中的下载地址和公告内容。
 - 统一 `manifest.json`、Electron 安装包和发布服务中的版本号。
-- 根据发布方式补充合适的 `LICENSE` 文件。
+- 保留 MIT `LICENSE` 文件及第三方版权和许可声明。
 
-更完整的配置审计和安全建议见 `CONFIGURATION_AUDIT_REPORT.md`。
+配置示例见 `.env.example`，市场服务与签名迁移说明见 [server/MARKETPLACE.md](server/MARKETPLACE.md)，部署示例见 [deploy/SERVER.md](deploy/SERVER.md)。
 
 第三方代码和数据的版权、来源及许可声明见 `THIRD_PARTY_NOTICES.md`。
 
@@ -361,3 +384,7 @@ npm run build:electron:dir
 ## AI 开发声明
 
 本项目在设计、编码、重构、文档编写和问题排查过程中使用了 GPT 与 DeepSeek 进行混合辅助开发。AI 生成或建议的内容由项目维护者结合实际需求进行审阅、修改和测试，最终代码质量、安全性及发布内容仍由项目维护者负责。
+
+## 许可证
+
+本项目使用 [MIT License](LICENSE)。第三方组件和数据的许可另见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

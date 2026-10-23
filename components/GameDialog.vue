@@ -408,7 +408,7 @@ function quitGame() {
         runtime.removeStorageSync('mud_auto')
         net.quit()
         setTimeout(() => {
-          runtime.reLaunch({ url: '/pages/login/login' })
+          runtime.navigateTo({ url: '/pages/login/login' })
         }, 200)
       }
     }

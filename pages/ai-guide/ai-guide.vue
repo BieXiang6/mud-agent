@@ -60,7 +60,7 @@
         </view>
         <view class="notice">
           <text class="notice-title">模型 ID 以官方控制台为准</text>
-          <text>本应用当前预设为 deepseek-v4-flash。若你的 DeepSeek 账户暂不支持该模型，请从官方文档选择账户可用的模型 ID。</text>
+          <text>本应用当前预设为 deepseek-flash。若你的 DeepSeek 账户暂不支持该模型，请从官方文档选择账户可用的模型 ID。</text>
         </view>
         <view class="button-row">
           <view class="button" hover-class="hp" @tap="openUrl(docsUrl, 'API 文档地址')">查看官方文档</view>
@@ -88,6 +88,10 @@
         <view class="usage-row">
           <text class="usage-index">D</text>
           <text>运行中可查看工具调用；需要立即中断时点“停止”。不同目标用“新增任务”分开，历史记录可在“任务”中恢复。</text>
+        </view>
+        <view class="usage-row">
+          <text class="usage-index">E</text>
+          <text>要让 Agent 阅读文本资料或源码，点击输入框下方的“附件”选择文件，再填写处理要求并发送；支持包括 .cs 在内的任意代码扩展名，也支持无扩展名源码。每轮最多 3 个文件，单个不超过 256 KiB。</text>
         </view>
         <view class="notice warning">
           <text class="notice-title">先从低风险任务开始</text>
@@ -135,7 +139,7 @@ const configItems = [
   { label: 'API Key', value: '粘贴刚创建的 sk-...，不要粘贴引号' },
   { label: 'Base URL', value: 'https://api.deepseek.com', copy: 'https://api.deepseek.com' },
   { label: '协议', value: 'OpenAI Chat Completions' },
-  { label: '模型 ID', value: 'deepseek-v4-flash', copy: 'deepseek-v4-flash' },
+  { label: '模型 ID', value: 'deepseek-flash', copy: 'deepseek-flash' },
   { label: '上下文与输出', value: '初次使用可保留页面默认值', hint: '若请求报告参数超限，再按官方模型文档调小。' },
   { label: '压缩阈值 / 保留轮数', value: '80% / 3 轮', hint: '适合大多数连续游戏任务。' }
 ]

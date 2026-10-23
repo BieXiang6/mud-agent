@@ -77,6 +77,7 @@ export function createElectronPlatform(bridge = electronBridge()) {
   }
   const web = createUniappPlatform()
   const socketHandlers = new Map()
+  const httpStreamHandlers = new Map()
   const initialHash = typeof window !== 'undefined' && window.location
     ? String(window.location.hash || '').replace(/^#\/?/u, '')
     : ''
@@ -94,6 +95,15 @@ export function createElectronPlatform(bridge = electronBridge()) {
       handlers.onClose && handlers.onClose(event)
     }
   })
+
+  if (bridge.http && typeof bridge.http.onStream === 'function') {
+    bridge.http.onStream((event) => {
+      const handler = event && httpStreamHandlers.get(event.id)
+      if (!handler) return
+      handler(event)
+      if (event.phase === 'end' || event.error) httpStreamHandlers.delete(event.id)
+    })
+  }
 
   async function fetchText(options) {
     return bridge.http.fetch({
@@ -214,6 +224,23 @@ export function createElectronPlatform(bridge = electronBridge()) {
     },
 
     fetchText,
+    fetchStream(options, onEvent) {
+      if (!bridge.http || typeof bridge.http.startStream !== 'function' || typeof bridge.http.onStream !== 'function') {
+        return fetchText(options).then((response) => {
+          onEvent({ id: options.id, phase: 'headers', status: response.status, statusText: response.statusText, headers: response.headers })
+          onEvent({ id: options.id, phase: 'chunk', chunk: response.body })
+          onEvent({ id: options.id, phase: 'end' })
+        }).catch((error) => onEvent({ id: options.id, error: error.message || String(error) }))
+      }
+      httpStreamHandlers.set(options.id, onEvent)
+      bridge.http.startStream(options)
+      return {
+        abort() {
+          httpStreamHandlers.delete(options.id)
+          if (typeof bridge.http.abortStream === 'function') bridge.http.abortStream(options.id)
+        }
+      }
+    },
     request(options) {
       const task = fetchText(options)
         .then((response) => {

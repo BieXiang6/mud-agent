@@ -40,7 +40,7 @@ test('serves the latest version and announcement', async () => {
     const announcement = await announcementResponse.json()
     assert.equal(announcementResponse.status, 200)
     assert.equal(announcement.success, true)
-    assert.equal(announcement.data.id, '20260809-welcome')
+    assert.equal(announcement.data.id, '20261023-v1-0-5-to-v1-1-1')
     assert.ok(announcement.data.content)
   })
 })

@@ -17,7 +17,7 @@ configurePlatform({
 })
 
 const { recordGameEvent } = await import('../utils/ai/eventJournal.js')
-const { cancelScriptRun, getScriptRun, runStoredScript, validateScriptSource } = await import('../utils/ai/scriptRuntime.js')
+const { cancelScriptRun, getScriptRun, listScriptRuns, runStoredScript, validateScriptSource } = await import('../utils/ai/scriptRuntime.js')
 const { deleteStoredScript, getStoredScript, listStoredScripts, saveStoredScript } = await import('../utils/ai/scriptStore.js')
 const { createScriptTools } = await import('../utils/ai/scriptTools.js')
 
@@ -57,16 +57,52 @@ test('supports non-blocking runs, event listeners, status lookup, and cancellati
   setTimeout(() => recordGameEvent('chat', 'hello listener'), 5)
   assert.equal((await watching).result, 'hello listener')
 
-  const active = await runStoredScript({ scriptId: delayed.id, functionName: 'forever', waitForResult: false, timeoutMs: 5000 })
+  const active = await runStoredScript({ scriptId: delayed.id, functionName: 'forever', waitForResult: false })
   await new Promise((resolve) => setTimeout(resolve, 5))
   assert.equal(cancelScriptRun(active.id).status, 'running')
   await new Promise((resolve) => setTimeout(resolve, 5))
   assert.equal(getScriptRun(active.id).status, 'cancelled')
 })
 
+test('cancels a running script when the Agent abort signal fires', async () => {
+  const script = saveStoredScript({
+    name: 'agent-abort',
+    source: 'exports.main = async function () { await game.keepAlive(); };'
+  })
+  const controller = new AbortController()
+  const running = runStoredScript({ scriptId: script.id, waitForResult: true, signal: controller.signal })
+  setTimeout(() => controller.abort(), 5)
+  assert.equal((await running).status, 'cancelled')
+})
+
+test('lists Agent-started runs for manual control and cancellation', async () => {
+  const script = saveStoredScript({
+    name: 'controlled-agent-run',
+    source: 'exports.main = async function () { await game.keepAlive(); };'
+  })
+  const started = await runStoredScript({ scriptId: script.id, waitForResult: false, origin: 'agent' })
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  const visible = listScriptRuns().find((run) => run.id === started.id)
+  assert.equal(visible.origin, 'agent')
+  assert.equal(visible.status, 'running')
+  assert.equal(cancelScriptRun(visible.id).id, started.id)
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.equal(listScriptRuns().find((run) => run.id === started.id).status, 'cancelled')
+})
+
+test('does not impose an execution timeout, including for legacy timeoutMs callers', async () => {
+  const script = saveStoredScript({
+    name: 'no-timeout',
+    source: 'exports.main = async function () { await game.sleep(230); return "finished"; };'
+  })
+  const result = await runStoredScript({ scriptId: script.id, waitForResult: true, timeoutMs: 200 })
+  assert.equal(result.status, 'completed')
+  assert.equal(result.result, 'finished')
+})
+
 test('exposes script persistence and function invocation through agent tools', async () => {
   const tools = new Map(createScriptTools().map((tool) => [tool.name, tool]))
-  assert.deepEqual(Array.from(tools.keys()), ['list_game_scripts', 'get_game_script', 'save_game_script', 'delete_game_script', 'run_game_script', 'get_script_run', 'cancel_script_run'])
+  assert.deepEqual(Array.from(tools.keys()), ['list_game_scripts', 'get_game_script', 'edit_game_script', 'save_game_script', 'delete_game_script', 'run_game_script', 'get_script_run', 'cancel_script_run'])
   const saved = await tools.get('save_game_script').execute('save', {
     name: 'tool-script',
     description: 'tool integration',

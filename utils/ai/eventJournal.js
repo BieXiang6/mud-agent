@@ -1,10 +1,11 @@
+export function createEventJournal() {
 const MAX_EVENTS = 2000
 
 let nextSeq = 0
 const events = []
 const subscribers = new Set()
 
-export function recordGameEvent(region, text, details = null) {
+function recordGameEvent(region, text, details = null) {
   const event = {
     seq: ++nextSeq,
     timestamp: Date.now(),
@@ -20,17 +21,17 @@ export function recordGameEvent(region, text, details = null) {
   return event
 }
 
-export function subscribeGameEvents(listener) {
+function subscribeGameEvents(listener) {
   if (typeof listener !== 'function') throw new Error('事件监听器必须是函数')
   subscribers.add(listener)
   return () => subscribers.delete(listener)
 }
 
-export function latestEventSeq() {
+function latestEventSeq() {
   return nextSeq
 }
 
-export function queryGameEvents(options = {}) {
+function queryGameEvents(options = {}) {
   const regionSet = options.regions && options.regions.length ? new Set(options.regions) : null
   const sinceSeq = Number(options.sinceSeq || 0)
   const sinceTime = Number(options.sinceTime || 0)
@@ -54,7 +55,7 @@ function abortError() {
   return error
 }
 
-export function waitForGameEvent(options = {}, signal) {
+function waitForGameEvent(options = {}, signal) {
   const timeoutMs = Math.max(200, Math.min(Number(options.timeoutMs || 10000), 60000))
   const regions = options.regions && options.regions.length ? options.regions : null
   const regionSet = regions ? new Set(regions) : null
@@ -84,6 +85,17 @@ export function waitForGameEvent(options = {}, signal) {
   })
 }
 
-export function clearGameEvents() {
+function clearGameEvents() {
   events.splice(0, events.length)
 }
+
+return { recordGameEvent, subscribeGameEvents, latestEventSeq, queryGameEvents, waitForGameEvent, clearGameEvents }
+}
+let activeJournal = createEventJournal()
+export function setActiveEventJournal(journal) { activeJournal = journal }
+export function recordGameEvent(...args) { return activeJournal.recordGameEvent(...args) }
+export function subscribeGameEvents(...args) { return activeJournal.subscribeGameEvents(...args) }
+export function latestEventSeq(...args) { return activeJournal.latestEventSeq(...args) }
+export function queryGameEvents(...args) { return activeJournal.queryGameEvents(...args) }
+export function waitForGameEvent(...args) { return activeJournal.waitForGameEvent(...args) }
+export function clearGameEvents(...args) { return activeJournal.clearGameEvents(...args) }

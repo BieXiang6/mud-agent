@@ -17,6 +17,8 @@ test('registers the built-in appearance and scripting skills', async () => {
 
   const scriptResult = await tool.execute('test', { name: 'write-game-script' })
   assert.match(scriptResult.content[0].text, /run_game_script/)
+  assert.match(scriptResult.content[0].text, /edit_game_script/)
+  assert.match(scriptResult.content[0].text, /Local editing/)
   assert.match(scriptResult.content[0].text, /game\.keepAlive/)
   assert.match(scriptResult.content[0].text, /Script container API/)
 

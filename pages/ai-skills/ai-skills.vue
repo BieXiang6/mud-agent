@@ -3,6 +3,7 @@
     <view class="topbar">
       <view class="back" hover-class="hp" @tap="goBack">‹</view>
       <text class="title">Skills</text>
+      <view class="market-open" @tap="openMarket">Skill 市场</view>
       <text class="count">{{ state.skills.length }}</text>
     </view>
     <scroll-view scroll-y class="body">
@@ -58,6 +59,7 @@ function toggleSkill(name, event) {
   try { setCustomAiSkillEnabled(name, Boolean(event && event.detail && event.detail.value)); refresh() } catch (error) { state.error = error.message }
 }
 function goBack() { runtime.navigateBack() }
+function openMarket() { runtime.navigateTo({ url: '/pages/ai-market/ai-market?type=skill' }) }
 onShow(refresh)
 </script>
 
@@ -67,6 +69,7 @@ onShow(refresh)
 .back { width: 58rpx; height: 58rpx; display: flex; align-items: center; justify-content: center; font-size: 48rpx; }
 .title { flex: 1; font-size: 28rpx; font-weight: bold; }
 .count { min-width: 42rpx; text-align: center; color: #9fc7e6; font-size: 20rpx; }
+.market-open { margin-right: 12rpx; padding: 10rpx 14rpx; border: 1rpx solid #3f78aa; color: var(--app-primary); font-size: 20rpx; }
 .body { flex: 1; min-height: 0; padding: 18rpx; box-sizing: border-box; }
 .empty { padding: 50rpx 0; text-align: center; color: #74818b; font-size: 21rpx; }
 .skill-row { min-height: 78rpx; margin-bottom: 8rpx; padding: 10rpx 12rpx; display: flex; align-items: center; gap: 12rpx; border: 1rpx solid #303840; background: #12171b; }

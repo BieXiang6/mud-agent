@@ -10,7 +10,7 @@ exports.functionName = async function (firstArg, secondArg) {
 };
 ```
 
-`run_game_script.args` is a JSON array of positional arguments. The function return value, API values, and logs must be JSON-compatible. A run can end as `queued`, `running`, `completed`, `failed`, `cancelled`, or `timed_out`.
+`run_game_script.args` is a JSON array of positional arguments. The function return value, API values, and logs must be JSON-compatible. A run can end as `queued`, `running`, `completed`, `failed`, or `cancelled`.
 
 ## Regions
 
@@ -34,7 +34,7 @@ Snapshots from actionable regions contain `action.id` values. Read the region ag
 
 - `await game.sleep(ms)`: non-blocking delay, capped at 60 seconds per call.
 - `game.on(regions, async event => { ... })`: subscribe to new journal events in one region or an array of regions. Returns an unsubscribe function.
-- `await game.keepAlive()`: keep a listener function alive until its run is cancelled or times out.
+- `await game.keepAlive()`: keep a listener function alive until its run is explicitly cancelled.
 - `game.log(...values)` / `console.log(...)`: append bounded diagnostic logs shown by `get_script_run`.
 
 Listener example:
@@ -53,6 +53,6 @@ Start this function with `waitForResult=false`, then query or cancel it by `runI
 ## Container limits
 
 - Up to 50 saved scripts and 40,000 source characters per script.
-- Up to 20 positional arguments, 100 log entries, 100,000 serialized return characters, and a 10-minute run timeout.
+- Up to 20 positional arguments, 100 log entries, and 100,000 serialized return characters. Runs have no automatic timeout and continue until completion or cancellation.
 - No synchronous loop statements, global runtime access, network/storage APIs, prototype or constructor access, dynamic imports, `eval`, `Function`, Web Workers, or direct timers.
 - Listeners exist only for the lifetime of one function run and are always cleaned up afterward.

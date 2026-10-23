@@ -35,9 +35,60 @@ public class MudTcpModule extends UniModule {
     private Socket socket;
     private OutputStreamWriter writer;
     private UniJSCallback connectionCallback;
+    private final Map<String, MudTcpModule> sessions = new HashMap<>();
+
+    @UniJSMethod(uiThread = false)
+    public void connectSession(String id, String host, int port, int timeoutMs, String encoding, UniJSCallback callback) {
+        synchronized (sessions) {
+            MudTcpModule client = sessions.get(id);
+            if (client == null) {
+                if (sessions.size() >= 5) {
+                    invokeOnce(callback, event("error", "最多同时连接 5 个账号"));
+                    return;
+                }
+                client = new MudTcpModule();
+                sessions.put(id, client);
+            }
+            client.connectWithEncoding(host, port, timeoutMs, encoding, callback);
+        }
+    }
+
+    @UniJSMethod(uiThread = false)
+    public void sendSession(String id, String text, UniJSCallback callback) {
+        synchronized (sessions) {
+            MudTcpModule client = sessions.get(id);
+            if (client == null) invokeOnce(callback, event("error", "账号连接不存在"));
+            else client.send(text, callback);
+        }
+    }
+
+    @UniJSMethod(uiThread = false)
+    public void closeSession(String id) {
+        synchronized (sessions) {
+            MudTcpModule client = sessions.remove(id);
+            if (client != null) client.close();
+        }
+    }
+
+    @Override
+    public void onActivityDestroy() {
+        synchronized (sessions) {
+            for (MudTcpModule client : sessions.values()) client.close();
+            sessions.clear();
+        }
+        close();
+        super.onActivityDestroy();
+    }
 
     @UniJSMethod(uiThread = false)
     public void connect(final String host, final int port, final int timeoutMs, final UniJSCallback callback) {
+        connectWithEncoding(host, port, timeoutMs, "GBK", callback);
+    }
+
+    @UniJSMethod(uiThread = false)
+    public void connectWithEncoding(final String host, final int port, final int timeoutMs,
+                                    final String encoding, final UniJSCallback callback) {
+        final Charset charset = resolveCharset(encoding);
         final long token;
         synchronized (lock) {
             closeLocked("replaced");
@@ -47,21 +98,26 @@ public class MudTcpModule extends UniModule {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                connectAndRead(host, port, timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS, token, callback);
+                connectAndRead(host, port, timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS, charset, token, callback);
             }
         }, "MudTcp-connect").start();
     }
 
-    private void connectAndRead(String host, int port, int timeoutMs, long token, UniJSCallback callback) {
+    private Charset resolveCharset(String encoding) {
+        return encoding != null && ("UTF-8".equalsIgnoreCase(encoding) || "UTF8".equalsIgnoreCase(encoding))
+                ? Charset.forName("UTF-8") : GBK;
+    }
+
+    private void connectAndRead(String host, int port, int timeoutMs, Charset charset, long token, UniJSCallback callback) {
         Socket newSocket = new Socket();
         try {
             newSocket.setTcpNoDelay(true);
             newSocket.setKeepAlive(true);
             newSocket.setReceiveBufferSize(64 * 1024);
             newSocket.connect(new InetSocketAddress(host, port), timeoutMs);
-            OutputStreamWriter newWriter = new OutputStreamWriter(newSocket.getOutputStream(), GBK);
+            OutputStreamWriter newWriter = new OutputStreamWriter(newSocket.getOutputStream(), charset);
             InputStreamReader reader = new InputStreamReader(
-                    new BufferedInputStream(newSocket.getInputStream(), 16 * 1024), GBK);
+                    new BufferedInputStream(newSocket.getInputStream(), 16 * 1024), charset);
 
             synchronized (lock) {
                 if (token != generation) {

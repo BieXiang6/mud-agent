@@ -1,2 +1,2 @@
 package io.dcloud.feature.uniapp.common;
-public class UniModule { }
+public class UniModule { public void onActivityDestroy() {} }

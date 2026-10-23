@@ -6,48 +6,51 @@
       <view class="nav-space" />
     </view>
 
-    <view class="content">
-      <view class="heading">
-        <text class="title">常用名帖</text>
-        <text class="subtitle">选择一个账号，返回登录页继续连接</text>
-      </view>
+    <scroll-view scroll-y class="account-scroll">
+      <view class="content">
+        <view class="heading">
+          <text class="title">常用名帖</text>
+          <text class="subtitle">选择一个账号，返回登录页继续连接</text>
+        </view>
 
-      <view v-if="profiles.length" class="account-list">
-        <view
-          v-for="profile in profiles"
-          :key="profile.id"
-          class="account-card"
-          :class="{ active: profile.id === activeProfileId }"
-          hover-class="card-pressed"
-          @tap="selectProfile(profile)"
-        >
-          <view class="account-main">
-            <view class="account-line">
-              <text class="account-name">{{ profile.account }}</text>
-              <text v-if="profile.id === activeProfileId" class="current">当前</text>
+        <view v-if="profiles.length" class="account-list">
+          <view
+            v-for="profile in profiles"
+            :key="profile.id"
+            class="account-card"
+            :class="{ active: profile.id === activeProfileId }"
+            hover-class="card-pressed"
+            @tap="selectProfile(profile)"
+          >
+            <view class="account-main">
+              <view class="account-line">
+                <text class="account-name">{{ profile.account }}</text>
+                <text v-if="profile.id === activeProfileId" class="current">当前</text>
+              </view>
+              <text class="server">{{ profile.host }}:{{ profile.port }}</text>
+              <text class="captcha">区服暗号 {{ profile.captcha }}</text>
+              <text class="profile-encoding">字符编码 {{ profile.encoding === 'utf-8' ? 'UTF-8' : 'GBK' }}</text>
             </view>
-            <text class="server">{{ profile.host }}:{{ profile.port }}</text>
-            <text class="captcha">区服暗号 {{ profile.captcha }}</text>
-          </view>
-          <view class="actions">
-            <text class="choose">选择</text>
-            <text class="remove" hover-class="remove-pressed" @tap.stop="confirmRemove(profile)">删除</text>
+            <view class="actions">
+              <text class="choose">选择</text>
+              <text class="remove" hover-class="remove-pressed" @tap.stop="confirmRemove(profile)">删除</text>
+            </view>
           </view>
         </view>
-      </view>
 
-      <view v-else class="empty">
-        <text class="empty-mark">名帖</text>
-        <text class="empty-title">还没有保存的账号</text>
-        <text class="empty-copy">在登录页成功进入游戏后，账号会自动保存到这里。</text>
-        <view class="empty-back" hover-class="pressed" @tap="goBack">返回登录</view>
-      </view>
+        <view v-else class="empty">
+          <text class="empty-mark">名帖</text>
+          <text class="empty-title">还没有保存的账号</text>
+          <text class="empty-copy">在登录页成功进入游戏后，账号会自动保存到这里。</text>
+          <view class="empty-back" hover-class="pressed" @tap="goBack">返回登录</view>
+        </view>
 
-      <view class="security">
-        <text class="security-title">本机存储提示</text>
-        <text class="security-copy">登录信息仅保存在当前设备，密码不会在列表中显示。共享设备使用后，请删除对应名帖。</text>
+        <view class="security">
+          <text class="security-title">本机存储提示</text>
+          <text class="security-copy">登录信息仅保存在当前设备，密码不会在列表中显示。共享设备使用后，请删除对应名帖。</text>
+        </view>
       </view>
-    </view>
+    </scroll-view>
   </view>
 </template>
 
@@ -60,6 +63,7 @@ import { appStyle } from '@/utils/appearance.js'
 import {
   ACTIVE_LOGIN_PROFILE_KEY,
   LOGIN_PROFILES_KEY,
+  findSelectedProfile,
   normalizeProfiles,
   removeProfile
 } from '@/utils/loginProfiles.js'
@@ -70,9 +74,8 @@ const activeProfileId = ref('')
 function loadProfiles() {
   profiles.value = normalizeProfiles(runtime.getStorageSync(LOGIN_PROFILES_KEY))
   const storedId = runtime.getStorageSync(ACTIVE_LOGIN_PROFILE_KEY)
-  activeProfileId.value = profiles.value.some((profile) => profile.id === storedId)
-    ? storedId
-    : (profiles.value[0] ? profiles.value[0].id : '')
+  const selected = findSelectedProfile(profiles.value, storedId)
+  activeProfileId.value = selected ? selected.id : ''
 }
 
 function persistProfiles() {
@@ -93,6 +96,7 @@ function persistLegacySelection(profile) {
   runtime.setStorageSync('mud_id', profile.account)
   runtime.setStorageSync('mud_pass', profile.password)
   runtime.setStorageSync('mud_key', profile.captcha)
+  runtime.setStorageSync('mud_encoding', profile.encoding === 'utf-8' ? 'utf-8' : 'gbk')
 }
 
 function selectProfile(profile) {
@@ -126,14 +130,18 @@ function goBack() {
 onLoad(loadProfiles)
 </script>
 
-<style>
+<style scoped>
 .page {
-  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   box-sizing: border-box;
   background: #0b0d0c;
   color: #e5e8e4;
 }
 .nav {
+  flex: none;
   height: calc(var(--status-bar-height) + 94rpx);
   padding: var(--status-bar-height) 24rpx 0;
   box-sizing: border-box;
@@ -147,7 +155,8 @@ onLoad(loadProfiles)
 .back { color: #cfd5d0; font-size: 60rpx; line-height: 64rpx; text-align: center; }
 .nav-title { font-family: STKaiti, KaiTi, serif; font-size: 31rpx; font-weight: bold; }
 .pressed { opacity: 0.62; }
-.content { padding: 34rpx 28rpx 48rpx; }
+.account-scroll { flex: 1; height: 0; min-height: 0; }
+.content { padding: 34rpx 28rpx 48rpx; padding-bottom: calc(48rpx + env(safe-area-inset-bottom)); }
 .heading { margin-bottom: 26rpx; }
 .title { display: block; font-family: STKaiti, KaiTi, serif; font-size: 38rpx; font-weight: bold; }
 .subtitle { display: block; margin-top: 8rpx; color: #7f8b84; font-size: 22rpx; }
@@ -169,8 +178,9 @@ onLoad(loadProfiles)
 .account-line { display: flex; align-items: center; }
 .account-name { max-width: 380rpx; overflow: hidden; color: #edf0ed; font-size: 29rpx; font-weight: bold; text-overflow: ellipsis; white-space: nowrap; }
 .current { margin-left: 12rpx; padding: 3rpx 9rpx; border: 1rpx solid #a84a40; color: #d77a70; font-size: 18rpx; }
-.server, .captcha { display: block; margin-top: 8rpx; color: #7f8b84; font-size: 20rpx; }
+.server, .captcha, .profile-encoding { display: block; margin-top: 8rpx; color: #7f8b84; font-size: 20rpx; }
 .captcha { margin-top: 4rpx; color: #66736c; }
+.profile-encoding { margin-top: 4rpx; color: #b06a61; }
 .actions { flex: none; margin-left: 18rpx; display: flex; align-items: center; }
 .choose, .remove { padding: 16rpx 12rpx; font-size: 22rpx; }
 .choose { color: #a7c6b4; }
@@ -194,6 +204,7 @@ onLoad(loadProfiles)
 .page.light .account-name { color: #29322c; }
 .page.light .server { color: #625f54; }
 .page.light .captcha { color: #807867; }
+.page.light .profile-encoding { color: #914b43; }
 .page.light .choose { color: #376b58; }
 .page.light .remove { color: #9b4d44; }
 .page.light .empty { border-color: #aaa087; }

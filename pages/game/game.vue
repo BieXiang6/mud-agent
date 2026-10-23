@@ -121,10 +121,19 @@
                 <view v-for="(turn, i) in aiState.conversation" :key="i" class="ai-turn" :class="turn.role">
                   <view class="ai-turn-heading">
                     <view class="ai-turn-role">{{ turn.role === 'user' ? '你' : 'AI' }}</view>
-                    <text v-if="turn.role === 'user'" class="ai-token-estimate">≈ {{ estimateContentTokens(turn.text) }} Token</text>
+                    <text v-if="turn.role === 'user'" class="ai-token-estimate">≈ {{ userTurnTokens(turn) }} Token</text>
                     <text v-else-if="turn.tokenUsage" class="ai-token-actual">{{ turnTokenUsage(turn) }}</text>
                   </view>
-                  <view v-if="turn.role === 'user'" class="ai-turn-text">{{ turn.text }}</view>
+                  <template v-if="turn.role === 'user'">
+                    <view v-if="turn.text" class="ai-turn-text">{{ turn.text }}</view>
+                    <view v-if="turn.attachments && turn.attachments.length" class="ai-turn-attachments">
+                      <view v-for="(file, fi) in turn.attachments" :key="fi" class="ai-turn-attachment">
+                        <text class="ai-attachment-icon">TXT</text>
+                        <text class="ai-attachment-name">{{ file.name }}</text>
+                        <text class="ai-attachment-size">{{ formatFileSize(file.size) }}</text>
+                      </view>
+                    </view>
+                  </template>
                   <view v-else-if="turn.completed" class="ai-finished">
                     <view class="ai-finished-summary">
                       <view class="ai-block-label-row">
@@ -211,14 +220,21 @@
               </scroll-view>
               <view class="ai-composer">
                 <textarea v-model="aiState.task" class="ai-task" maxlength="2000" placeholder="输入下一轮目标" />
+                <view v-if="aiState.attachments.length" class="ai-pending-attachments">
+                  <view v-for="(file, i) in aiState.attachments" :key="i" class="ai-pending-attachment">
+                    <text class="ai-attachment-name">{{ file.name }}</text>
+                    <text class="ai-attachment-size">{{ formatFileSize(file.size) }}</text>
+                    <view class="ai-attachment-remove" hover-class="hp" @tap="removeAiAttachment(i)">×</view>
+                  </view>
+                </view>
                 <view class="ai-actions">
+                  <view v-if="!aiState.busy" class="ai-action attachment" hover-class="hp" @tap="addAiAttachment">{{ aiState.attachmentBusy ? '读取中' : '附件' }}</view>
                   <view v-if="!aiState.busy" class="ai-action primary" hover-class="hp" @tap="runAiTask">发送</view>
                   <view v-else class="ai-action danger" hover-class="hp" @tap="stopAiTask">停止</view>
                   <view class="ai-action" hover-class="hp" @tap="createAiTask">新增任务</view>
                 </view>
               </view>
             </view>
-            <view class="ai-render-bridge" :payload="aiRenderState.requestPayload" :change:payload="aiRender.onRequest" />
           </view>
 
           <!-- 方向出口 -->
@@ -336,7 +352,7 @@
         @touchstart.stop="startQuickEntryDrag"
         @touchmove.stop.prevent="moveQuickEntryDrag"
         @touchend.stop="endQuickEntryDrag"
-        @touchcancel.stop="endQuickEntryDrag"
+        @touchcancel.stop="cancelQuickEntryPress"
         @tap.stop="toggleQuickPanel"
       >
         <text>快捷</text>
@@ -348,13 +364,22 @@
       <text class="lost-title">这是江湖智能体</text>
       <text class="lost-t">{{ state.connected ? '' : '连接已断开' }}</text>
       <view class="lost-btn" hover-class="hp" @tap="backToLogin">返回登录</view>
+      <view v-if="gameSessions.length" class="lost-btn" hover-class="hp" @tap="openAccountSwitcher">切换在线账号</view>
     </view>
 
+    <AccountSwitcher :visible="accountSwitcherVisible" @close="accountSwitcherVisible = false" @switched="finishAccountSwitch" @add="loginAnotherAccount" />
+    <view
+      class="ai-render-bridge"
+      :payload="aiRenderState.requestPayload"
+      :change:payload="aiRender.onRequest"
+      :cancel="aiRenderState.cancelPayload"
+      :change:cancel="aiRender.onCancel"
+    />
   </view>
 </template>
 
 <script>
-import { handleAiRenderEvent as dispatchAiRenderEvent } from '@/utils/ai/controller.js'
+import { handleAiRenderEvent as dispatchAiRenderEvent, refreshAiRenderBridge } from '@/utils/ai/controller.js'
 import { log as writeLog } from '@/utils/log.js'
 
 export default {
@@ -363,6 +388,7 @@ export default {
       dispatchAiRenderEvent(event)
     },
     onAiRenderBridgeReady() {
+      refreshAiRenderBridge()
       writeLog('AI-HTTP', 'renderjs 请求桥已就绪')
     }
   }
@@ -371,15 +397,32 @@ export default {
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { onShow } from '@/utils/platform/lifecycle.js'
+import { onHide, onShow } from '@/utils/platform/lifecycle.js'
 import { state, resetAll } from '@/utils/store.js'
 import { runtime } from '@/utils/platform/index.js'
 import { appStyle } from '@/utils/appearance.js'
 import net from '@/utils/net.js'
+import AccountSwitcher from '@/components/AccountSwitcher.vue'
+import { gameSessions } from '@/utils/gameSessions.js'
 import RichText from '@/components/RichText.vue'
 import GameDialog from '@/components/GameDialog.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
 import { log, escapeStr } from '@/utils/log.js'
+import { createLongPress, pressPoint } from '@/utils/longPress.js'
+const accountSwitcherVisible = ref(false)
+function openAccountSwitcher() {
+  suppressQuickEntryTapUntil = Date.now() + 800
+  quickVisible.value = false
+  accountSwitcherVisible.value = true
+}
+function finishAccountSwitch() {
+  accountSwitcherVisible.value = false
+  quickVisible.value = false
+}
+function loginAnotherAccount() {
+  accountSwitcherVisible.value = false
+  runtime.navigateTo({ url: '/pages/login/login?add=1' })
+}
 import {
   clampThinkingPage,
   thinkingPageContent,
@@ -399,6 +442,8 @@ import {
   pauseAiConversationAutoScroll,
   resumeAiConversationAutoScroll,
   runAiTask,
+  addAiAttachment,
+  removeAiAttachment,
   stopAiTask
 } from '@/utils/ai/controller.js'
 
@@ -432,6 +477,15 @@ const quickVisible = ref(false)
 const quickCommands = ref([])
 let suppressQuickEntryTapUntil = 0
 let suppressQuickButtonTapUntil = 0
+const quickEntryPress = createLongPress({
+  onLongPress() {
+    if (!quickEntryDrag.active || quickEntryDrag.moved) return
+    quickEntryDrag.active = false
+    openAccountSwitcher()
+  }
+})
+onHide(cancelQuickEntryPress)
+onBeforeUnmount(cancelQuickEntryPress)
 let aiConversationTouching = false
 let aiConversationTouchTimer = null
 let aiConversationLastScrollTop = 0
@@ -608,6 +662,16 @@ function estimateContentTokens(content) {
   return estimateTextTokens(content)
 }
 
+function userTurnTokens(turn) {
+  const files = (turn && Array.isArray(turn.attachments) ? turn.attachments : []).map((file) => file.text || '').join('\n')
+  return estimateTextTokens((turn && turn.text || '') + files)
+}
+
+function formatFileSize(value) {
+  const size = Math.max(0, Number(value) || 0)
+  return size < 1024 ? size + ' B' : Math.ceil(size / 1024) + ' KiB'
+}
+
 function estimateBlockTokens(block) {
   if (!block) return 0
   if (block.type === 'tool') return estimateTextTokens((block.name || '') + (block.args || '') + (block.result || ''))
@@ -703,7 +767,8 @@ function currentViewport() {
 }
 
 function startQuickEntryDrag(event) {
-  const point = touchPoint(event)
+  cancelQuickEntryPress()
+  const point = pressPoint(event)
   if (!point) return
   quickEntryDrag.active = true
   quickEntryDrag.moved = false
@@ -711,15 +776,14 @@ function startQuickEntryDrag(event) {
   quickEntryDrag.startY = point.pageY
   quickEntryDrag.offsetX = point.pageX - quickEntryPosition.x
   quickEntryDrag.offsetY = point.pageY - quickEntryPosition.y
+  quickEntryPress.start(event)
 }
 
 function moveQuickEntryDrag(event) {
   if (!quickEntryDrag.active) return
-  const point = touchPoint(event)
-  if (!point) return
-  if (Math.abs(point.pageX - quickEntryDrag.startX) + Math.abs(point.pageY - quickEntryDrag.startY) > 6) {
-    quickEntryDrag.moved = true
-  }
+  const point = pressPoint(event)
+  quickEntryDrag.moved = quickEntryPress.move(event)
+  if (!point) { cancelQuickEntryPress(); return }
   if (!quickEntryDrag.moved) return
   const viewport = currentViewport()
   quickEntryPosition.x = Math.max(0, Math.min(viewport.width - quickEntrySize, point.pageX - quickEntryDrag.offsetX))
@@ -727,7 +791,12 @@ function moveQuickEntryDrag(event) {
 }
 
 function endQuickEntryDrag() {
-  if (quickEntryDrag.moved) suppressQuickEntryTapUntil = Date.now() + 300
+  if (quickEntryPress.end()) suppressQuickEntryTapUntil = Math.max(suppressQuickEntryTapUntil, Date.now() + 350)
+  quickEntryDrag.active = false
+}
+
+function cancelQuickEntryPress() {
+  if (quickEntryPress.cancel()) suppressQuickEntryTapUntil = Math.max(suppressQuickEntryTapUntil, Date.now() + 350)
   quickEntryDrag.active = false
 }
 
@@ -781,6 +850,8 @@ function installElectronQuickPointerEvents() {
     dragTarget = ''
   }
   const onPointerDown = (event) => {
+    // Touch always uses the same touchstart timer as App-Plus, including on PC.
+    if (event.pointerType && event.pointerType !== 'mouse') return
     if (!event.isPrimary || event.button !== 0) return
     const element = event.target instanceof Element ? event.target : null
     if (!element) return
@@ -968,7 +1039,7 @@ function backToLogin() {
   log('BTN', '点击 返回登录')
   net.close()
   resetAll()
-  runtime.reLaunch({ url: '/pages/login/login' })
+  runtime.navigateTo({ url: '/pages/login/login' })
 }
 
 watch(
@@ -976,9 +1047,9 @@ watch(
   (v) => {
     // 连接断开时清掉弹窗
     if (!v) {
+      cancelQuickEntryPress()
       state.dialog = null
       quickVisible.value = false
-      stopAiTask()
     }
   }
 )
@@ -995,7 +1066,7 @@ onShow(() => {
   refreshAiState()
   // 若已不在登录状态 (被重置), 回登录页
   if (state.stage !== 'loginok') {
-    runtime.reLaunch({ url: '/pages/login/login' })
+    runtime.navigateTo({ url: '/pages/login/login' })
   }
 })
 </script>
@@ -1416,6 +1487,57 @@ onShow(() => {
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.ai-turn-attachments,
+.ai-pending-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6rpx;
+}
+.ai-turn-text + .ai-turn-attachments {
+  margin-top: 8rpx;
+}
+.ai-turn-attachment,
+.ai-pending-attachment {
+  min-width: 0;
+  max-width: 100%;
+  padding: 5rpx 7rpx;
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  border: 1rpx solid #36566f;
+  background: #142634;
+  box-sizing: border-box;
+}
+.ai-attachment-icon {
+  flex: none;
+  color: #79b5de;
+  font-size: 14rpx;
+}
+.ai-attachment-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #cce4f5;
+  font-size: 17rpx;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-attachment-size {
+  flex: none;
+  color: #7993a6;
+  font-size: 15rpx;
+}
+.ai-pending-attachments {
+  margin: 7rpx 0;
+}
+.ai-attachment-remove {
+  flex: none;
+  padding: 0 4rpx;
+  color: #e59a9a;
+  font-size: 22rpx;
+}
+.ai-action.attachment {
+  flex: 0 0 86rpx;
 }
 .ai-composer {
   flex: none;
@@ -2002,12 +2124,38 @@ onShow(() => {
 <script module="aiRender" lang="renderjs">
 export default {
   mounted() {
+    this.requestControllers = this.requestControllers || Object.create(null)
+    this.seenRequests = this.seenRequests || new Set()
     this.$ownerInstance.callMethod('onAiRenderBridgeReady')
   },
   methods: {
-    async onRequest(payload, oldPayload, ownerInstance) {
+    onCancel(payload, oldPayload, ownerInstance) {
       if (!payload || payload === oldPayload) return
-      const request = JSON.parse(payload)
+      const batch = JSON.parse(payload)
+      this.seenRequests = this.seenRequests || new Set()
+      const owner = ownerInstance || this.$ownerInstance
+      ;(batch.ids || [batch.id]).filter(Boolean).forEach(id => {
+        this.seenRequests.add(id)
+        const controller = this.requestControllers && this.requestControllers[id]
+        if (controller) controller.abort()
+        owner.callMethod('onAiRenderEvent', { id, phase: 'cancelled' })
+      })
+    },
+    onRequest(payload, oldPayload, ownerInstance) {
+      if (!payload || payload === oldPayload) return
+      const batch = JSON.parse(payload)
+      this.seenRequests = this.seenRequests || new Set()
+      this.requestControllers = this.requestControllers || Object.create(null)
+      ;(batch.requests || [batch]).forEach(request => {
+        if (!request.id || this.seenRequests.has(request.id)) return
+        this.seenRequests.add(request.id)
+        if (this.seenRequests.size > 1000) this.seenRequests.delete(this.seenRequests.values().next().value)
+        this.runRequest(request, ownerInstance)
+      })
+    },
+    async runRequest(request, ownerInstance) {
+      const controller = new AbortController()
+      this.requestControllers[request.id] = controller
       try {
         ownerInstance.callMethod('onAiRenderEvent', {
           id: request.id,
@@ -2016,26 +2164,49 @@ export default {
         const response = await fetch(request.url, {
           method: request.method,
           headers: request.headers,
-          body: request.body || undefined
+          body: request.body || undefined,
+          signal: controller.signal
         })
-        ownerInstance.callMethod('onAiRenderEvent', {
-          id: request.id,
-          phase: 'headers',
-          status: response.status,
-          statusText: response.statusText
-        })
-        const body = await response.text()
-        ownerInstance.callMethod('onAiRenderEvent', {
-          id: request.id,
-          status: response.status,
-          statusText: response.statusText,
-          body
-        })
+        const headers = {}
+        response.headers.forEach((value, key) => { headers[key] = value })
+        ownerInstance.callMethod('onAiRenderEvent', { id: request.id, phase: 'headers', status: response.status, statusText: response.statusText, headers })
+        let bufferedChunk = ''
+        let chunkTimer = null
+        const flushChunk = () => {
+          if (chunkTimer) clearTimeout(chunkTimer)
+          chunkTimer = null
+          if (!bufferedChunk) return
+          ownerInstance.callMethod('onAiRenderEvent', { id: request.id, phase: 'chunk', chunk: bufferedChunk })
+          bufferedChunk = ''
+        }
+        const queueChunk = (chunk) => {
+          if (!chunk) return
+          bufferedChunk += chunk
+          if (!chunkTimer) chunkTimer = setTimeout(flushChunk, 30)
+        }
+        if (response.body && response.body.getReader) {
+          const reader = response.body.getReader()
+          const decoder = new TextDecoder()
+          while (true) {
+            const result = await reader.read()
+            if (result.done) break
+            const chunk = decoder.decode(result.value, { stream: true })
+            queueChunk(chunk)
+          }
+          const tail = decoder.decode()
+          queueChunk(tail)
+        } else {
+          queueChunk(await response.text())
+        }
+        flushChunk()
+        ownerInstance.callMethod('onAiRenderEvent', { id: request.id, phase: 'end' })
       } catch (error) {
         ownerInstance.callMethod('onAiRenderEvent', {
           id: request.id,
           error: error && error.message ? error.message : String(error)
         })
+      } finally {
+        if (this.requestControllers[request.id] === controller) delete this.requestControllers[request.id]
       }
     }
   }

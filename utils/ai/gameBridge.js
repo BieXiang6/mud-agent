@@ -1,10 +1,11 @@
 import { parseRich } from '../ansi.js'
-import { state } from '../store.js'
-import net from '../net.js'
-import { openPop } from '../proto.js'
-import { latestEventSeq, queryGameEvents, waitForGameEvent } from './eventJournal.js'
+import { getActiveGameBridge } from '../gameSessions.js'
 import { validateCommandBatch } from './commandBatch.js'
 
+let commandBlacklist = new Set()
+let nextBridgeId = 0
+export function createGameBridge({ state, net, openPop, latestEventSeq, queryGameEvents, waitForGameEvent }) {
+const actionScope = 'account-' + (++nextBridgeId).toString(36)
 const ESC = String.fromCharCode(27)
 const DIRS = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']
 const REGIONS = ['all', 'out', 'chat', 'dialog', 'exits', 'here', 'long', 'gameobj', 'actions', 'tmenu', 'mycmds', 'status']
@@ -27,7 +28,6 @@ const REGION_ALIASES = {
 const MAX_WAIT_MS = 60000
 const emptySchema = { type: 'object', properties: {}, additionalProperties: false }
 const actionRegistry = new Map()
-let commandBlacklist = new Set()
 
 function objectSchema(properties, required = []) {
   return { type: 'object', properties, required, additionalProperties: false }
@@ -55,7 +55,7 @@ function recent(items, limit) {
 function registerAction(region, key, item, kind = 'command') {
   if (!item) return null
   const command = item.cmd || ''
-  const id = region + ':' + state.gameRevision + ':' + key
+  const id = actionScope + ':' + region + ':' + state.gameRevision + ':' + key
   actionRegistry.set(id, { region, key: String(key), command, kind, revision: state.gameRevision })
   if (actionRegistry.size > 1000) {
     const oldest = actionRegistry.keys().next().value
@@ -103,7 +103,7 @@ function exitsSnapshot() {
   return result
 }
 
-export function getRegionContent(region, limit = 50) {
+function getRegionContent(region, limit = 50) {
   region = String(region || '').trim().toLowerCase()
   region = REGION_ALIASES[region] || region
   const safeLimit = Math.max(1, Math.min(Number(limit || 50), 300))
@@ -132,7 +132,7 @@ export function getRegionContent(region, limit = 50) {
   throw new Error('未知游戏区域：' + region)
 }
 
-export function getGameSnapshot(limit = 50) {
+function getGameSnapshot(limit = 50) {
   return {
     revision: state.gameRevision,
     latestSeq: latestEventSeq(),
@@ -151,7 +151,7 @@ export function getGameSnapshot(limit = 50) {
   }
 }
 
-export function configureCommandBlacklist(value) {
+function configureCommandBlacklist(value) {
   const entries = Array.isArray(value) ? value : String(value || '').split(/[\s,，]+/)
   commandBlacklist = new Set(entries.map((item) => String(item).trim().toLowerCase()).filter(Boolean))
   return Array.from(commandBlacklist)
@@ -205,6 +205,7 @@ function success(data, terminate = false) {
 }
 
 async function sendAndObserve(command, signal, commandCount = 1) {
+  if (signal && signal.aborted) throw abortError()
   if (!state.connected || state.stage !== 'loginok') throw new Error('游戏未连接')
   const beforeRevision = state.gameRevision
   const beforeSeq = latestEventSeq()
@@ -230,7 +231,7 @@ function currentAction(registration) {
   return null
 }
 
-export async function invokeGameAction(actionId, text, signal) {
+async function invokeGameAction(actionId, text, signal) {
   const registration = actionRegistry.get(actionId)
   if (!registration) throw new Error('动作不存在或已过期，请重新读取区域')
   const current = currentAction(registration)
@@ -249,7 +250,7 @@ export async function invokeGameAction(actionId, text, signal) {
   return sendAndObserve(command, signal)
 }
 
-export async function sendGameCommand(command, options = {}, signal) {
+async function sendGameCommand(command, options = {}, signal) {
   if (options.expectedRevision != null && Number(options.expectedRevision) !== state.gameRevision) {
     throw new Error('游戏状态已变化，请重新读取区域')
   }
@@ -257,7 +258,7 @@ export async function sendGameCommand(command, options = {}, signal) {
   return sendAndObserve(validated.command, signal, validated.commands.length)
 }
 
-export function createMudTools() {
+function createMudTools() {
   return [
     {
       name: 'get_region_content',
@@ -348,4 +349,13 @@ export function createMudTools() {
   ]
 }
 
-export default { createMudTools, getGameSnapshot, getRegionContent, configureCommandBlacklist }
+
+
+return { getRegionContent, getGameSnapshot, configureCommandBlacklist, invokeGameAction, sendGameCommand, createMudTools }
+}
+export function getRegionContent(...args) { return getActiveGameBridge().getRegionContent(...args) }
+export function getGameSnapshot(...args) { return getActiveGameBridge().getGameSnapshot(...args) }
+export function configureCommandBlacklist(...args) { return getActiveGameBridge().configureCommandBlacklist(...args) }
+export function invokeGameAction(...args) { return getActiveGameBridge().invokeGameAction(...args) }
+export function sendGameCommand(...args) { return getActiveGameBridge().sendGameCommand(...args) }
+export function createMudTools(...args) { return getActiveGameBridge().createMudTools(...args) }

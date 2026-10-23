@@ -1,3 +1,5 @@
+import { normalizeTextAttachments } from './attachments.js'
+
 function jsonObject(value) {
   if (!value) return null
   try {
@@ -25,6 +27,9 @@ export function markTurnFinished(turn, block) {
 
 export function normalizeConversation(conversation) {
   return (Array.isArray(conversation) ? conversation : []).map((turn) => {
+    if (turn && turn.role === 'user') {
+      return { ...turn, attachments: normalizeTextAttachments(turn.attachments) }
+    }
     if (!turn || turn.role !== 'assistant' || !Array.isArray(turn.blocks)) return turn
     const finish = [...turn.blocks].reverse().find((block) => (
       block && block.name === 'finish' && block.status === 'done' && !block.isError

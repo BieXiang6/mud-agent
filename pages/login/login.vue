@@ -23,6 +23,7 @@
       <view class="form-heading">
         <text class="form-title">登录信息</text>
         <view class="form-actions">
+          <view v-if="gameSessions.length" class="help-link" hover-class="hp" @tap="!busy && (accountSwitcherVisible = true)">在线账号 {{ gameSessions.filter(s => s.connected).length }}/5</view>
           <view v-if="loginProfiles.length" class="help-link" hover-class="hp" @tap="openProfileManager">切换账号</view>
           <view class="help-link" hover-class="hp" @tap="loginHelpVisible = true">登录帮助</view>
         </view>
@@ -100,6 +101,14 @@
             <text v-if="debugLog" class="cb-check">✓</text>
           </view>
           <text class="auto-text">详细日志</text>
+        </view>
+      </view>
+
+      <view class="encoding-row">
+        <text class="encoding-label">字符编码</text>
+        <view class="encoding-picker">
+          <view class="encoding-option" :class="{ on: encoding === 'gbk' }" @tap="pickEncoding('gbk')">GBK</view>
+          <view class="encoding-option" :class="{ on: encoding === 'utf-8' }" @tap="pickEncoding('utf-8')">UTF-8</view>
         </view>
       </view>
 
@@ -193,6 +202,7 @@
         <view class="help-confirm" hover-class="hp" @tap="loginHelpVisible = false">我知道了</view>
       </view>
     </view>
+    <AccountSwitcher :visible="accountSwitcherVisible" @close="accountSwitcherVisible = false" @switched="resumeOnlineAccount" @add="accountSwitcherVisible = false" />
   </view>
 </template>
 
@@ -201,6 +211,8 @@ import { computed, ref, watch } from 'vue'
 import { onLoad, onShow } from '@/utils/platform/lifecycle.js'
 import { state, toggleThemeMode } from '@/utils/store.js'
 import net from '@/utils/net.js'
+import AccountSwitcher from '@/components/AccountSwitcher.vue'
+import { beginAccountLogin, gameSessions } from '@/utils/gameSessions.js'
 import { log, setLogLevel } from '@/utils/log.js'
 import { getLatestAnnouncement, getLatestVersion } from '@/utils/releaseApi.js'
 import { runtime } from '@/utils/platform/index.js'
@@ -209,6 +221,7 @@ import { clientConfig, validateGameProtocolConfig } from '@/utils/config.js'
 import {
   ACTIVE_LOGIN_PROFILE_KEY,
   LOGIN_PROFILES_KEY,
+  findSelectedProfile,
   normalizeProfiles,
   profileId,
   upsertProfile
@@ -225,10 +238,20 @@ const password = ref('')
 const captcha = ref(DEFAULT_CAPTCHA)
 const autoLogin = ref(false)
 const debugLog = ref(false)
+const encoding = ref('gbk')
 const nickname = ref('')
 const sex = ref('男性')
 const charMode = ref(false)
 const busy = ref(false)
+const accountSwitcherVisible = ref(false)
+const loginAttemptSessionId = ref('')
+function resumeOnlineAccount() {
+  accountSwitcherVisible.value = false
+  const pages = runtime.getCurrentPages()
+  const gameIndex = pages.findIndex(page => page.route === 'pages/game/game')
+  if (gameIndex >= 0 && gameIndex < pages.length - 1) runtime.navigateBack({ delta: pages.length - 1 - gameIndex })
+  else runtime.reLaunch({ url: '/pages/game/game' })
+}
 const errorMsg = ref('')
 const credsSent = ref(false)
 const appVersion = ref('1.0.0')
@@ -278,6 +301,13 @@ function toggleAuto() {
   autoLogin.value = !autoLogin.value
 }
 
+function pickEncoding(value) {
+  if (busy.value) return
+  encoding.value = value === 'utf-8' ? 'utf-8' : 'gbk'
+  runtime.setStorageSync('mud_encoding', encoding.value)
+  log('BTN', '选择字符编码:', encoding.value === 'utf-8' ? 'UTF-8' : 'GBK')
+}
+
 function writeProfiles() {
   runtime.setStorageSync(LOGIN_PROFILES_KEY, loginProfiles.value.map((profile) => ({ ...profile })))
   if (activeProfileId.value) runtime.setStorageSync(ACTIVE_LOGIN_PROFILE_KEY, activeProfileId.value)
@@ -290,6 +320,7 @@ function applyProfile(profile) {
   account.value = profile.account
   password.value = profile.password
   captcha.value = profile.captcha
+  encoding.value = profile.encoding || 'gbk'
   activeProfileId.value = profile.id
   errorMsg.value = ''
 }
@@ -308,7 +339,7 @@ function openProfileManager() {
 function refreshSelectedProfile() {
   loginProfiles.value = normalizeProfiles(runtime.getStorageSync(LOGIN_PROFILES_KEY))
   const storedActiveId = runtime.getStorageSync(ACTIVE_LOGIN_PROFILE_KEY)
-  const selected = loginProfiles.value.find((profile) => profile.id === storedActiveId) || loginProfiles.value[0]
+  const selected = findSelectedProfile(loginProfiles.value, storedActiveId)
   if (selected) applyProfile(selected)
   else if (activeProfileId.value) {
     activeProfileId.value = ''
@@ -337,6 +368,7 @@ function savePrefs() {
   runtime.setStorageSync('mud_port', port.value.trim())
   runtime.setStorageSync('mud_key', captcha.value.trim())
   runtime.setStorageSync('mud_auto', autoLogin.value ? 1 : 0)
+  runtime.setStorageSync('mud_encoding', encoding.value)
 }
 
 function saveSuccessfulLogin() {
@@ -345,7 +377,8 @@ function saveSuccessfulLogin() {
     port: port.value,
     account: account.value,
     password: password.value,
-    captcha: captcha.value
+    captcha: captcha.value,
+    encoding: encoding.value
   }
   loginProfiles.value = upsertProfile(loginProfiles.value, current)
   activeProfileId.value = profileId(current)
@@ -384,17 +417,28 @@ function doLogin() {
     return
   }
 
+  try {
+    if (beginAccountLogin({ host: h, port: p, account: a, password: pw, captcha: ck, encoding: encoding.value })) {
+      resumeOnlineAccount()
+      return
+    }
+    loginAttemptSessionId.value = state.sessionId
+  } catch (error) {
+    errorMsg.value = error.message
+    return
+  }
   errorMsg.value = ''
   busy.value = true
   charMode.value = false
   credsSent.value = false
-  state.stage = 'idle'
+  state.stage = 'connecting'
   state.statusMsg = '正在连接服务器...'
   savePrefs()
 
-  log('LOGIN', '尝试登录:', h + ':' + p, '账号:', a, '自动登录:', autoLogin.value)
+  log('LOGIN', '尝试登录:', h + ':' + p, '账号:', a, '编码:', encoding.value === 'utf-8' ? 'UTF-8' : 'GBK', '自动登录:', autoLogin.value)
 
   net.connect(h, parseInt(p, 10), {
+    encoding: encoding.value,
     onOpen() {
       log('LOGIN', 'TCP 已连接, 发送握手口令...')
       net.sendHandshake()
@@ -456,6 +500,7 @@ function backToLoginForm() {
 watch(
   () => state.stage,
   (val) => {
+    if (!loginAttemptSessionId.value || state.sessionId !== loginAttemptSessionId.value) return
     log('LOGIN', 'stage 变化 →', val)
     if (val === 'versionok') {
       sendCreds()
@@ -465,7 +510,7 @@ watch(
     } else if (val === 'loginok') {
       saveSuccessfulLogin()
       log('LOGIN', '登录成功, 跳转游戏页')
-      runtime.reLaunch({ url: '/pages/game/game' })
+      resumeOnlineAccount()
     } else if (val === 'error') {
       busy.value = false
       errorMsg.value = state.statusMsg
@@ -473,7 +518,8 @@ watch(
   }
 )
 
-onLoad(() => {
+onLoad((query = {}) => {
+  if (query.add === '1') skipAutoLoginOnce.value = true
   appVersion.value = runtime.getAppVersion()
   loadReleaseInfo()
 
@@ -483,6 +529,7 @@ onLoad(() => {
   const a = runtime.getStorageSync('mud_id')
   const pw = runtime.getStorageSync('mud_pass')
   captcha.value = runtime.getStorageSync('mud_key') || DEFAULT_CAPTCHA
+  encoding.value = runtime.getStorageSync('mud_encoding') === 'utf-8' ? 'utf-8' : 'gbk'
   loginProfiles.value = normalizeProfiles(runtime.getStorageSync(LOGIN_PROFILES_KEY))
   // 将旧版保存的单账号无感迁移到常用名帖。
   if (!loginProfiles.value.length && a && pw) {
@@ -491,11 +538,12 @@ onLoad(() => {
       port: port.value,
       account: a,
       password: pw,
-      captcha: captcha.value
+      captcha: captcha.value,
+      encoding: encoding.value
     })
   }
   const storedActiveId = runtime.getStorageSync(ACTIVE_LOGIN_PROFILE_KEY)
-  const selected = loginProfiles.value.find((profile) => profile.id === storedActiveId) || loginProfiles.value[0]
+  const selected = findSelectedProfile(loginProfiles.value, storedActiveId)
   if (selected) applyProfile(selected)
   else {
     account.value = a || ''
@@ -512,7 +560,10 @@ onShow(() => {
   refreshSelectedProfile()
   // 从游戏页返回 (退出游戏) 后重置
   if (state.stage === 'loginok') {
-    // 异常情况, 回到登录
+    if (state.connected) {
+      resumeOnlineAccount()
+      return
+    }
     state.stage = 'idle'
   }
   charMode.value = state.stage === 'charcreate'
@@ -741,6 +792,38 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   margin: 2rpx 0 22rpx;
+}
+.encoding-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -8rpx 0 22rpx;
+}
+.encoding-label {
+  color: #aeb6b0;
+  font-size: 24rpx;
+}
+.encoding-picker {
+  display: flex;
+  padding: 3rpx;
+  border: 1rpx solid #6f433e;
+  border-radius: 5rpx;
+  background: #17100f;
+}
+.encoding-option {
+  min-width: 96rpx;
+  height: 46rpx;
+  padding: 0 14rpx;
+  box-sizing: border-box;
+  color: #8f9992;
+  font-size: 22rpx;
+  line-height: 46rpx;
+  text-align: center;
+}
+.encoding-option.on {
+  background: #9c3b31;
+  box-shadow: inset 0 0 0 1rpx #cb675a;
+  color: #ffffff;
 }
 .auto-row {
   display: flex;
@@ -1061,6 +1144,10 @@ onShow(() => {
 .page.light .field-help { color: #537066; }
 .page.light .cb { border-color: #777c70; }
 .page.light .auto-text { color: #505a53; }
+.page.light .encoding-label { color: #505a53; }
+.page.light .encoding-picker { background: #fff5e5; border-color: #b77a70; }
+.page.light .encoding-option { color: #626a64; }
+.page.light .encoding-option.on { background: #9c3b31; box-shadow: inset 0 0 0 1rpx #bd5b50; color: #ffffff; }
 .page.light .login-btn.busy { background: #7b8177; border-color: #92998e; }
 .page.light .char-title { color: #2e3731; }
 .page.light .sex { background: #f9f2df; border-color: #9d947d; color: #4a544d; }

@@ -4,6 +4,7 @@ const fs = require('node:fs/promises')
 const path = require('node:path')
 
 const sockets = new Map()
+const httpStreams = new Map()
 const smokeTest = process.argv.includes('--smoke-test')
 
 function socketKey(webContentsId, id) {
@@ -27,6 +28,12 @@ function closeSocketsFor(webContentsId) {
     if (key.startsWith(webContentsId + ':')) {
       sockets.delete(key)
       socket.destroy()
+    }
+  }
+  for (const [key, controller] of httpStreams) {
+    if (key.startsWith(webContentsId + ':')) {
+      httpStreams.delete(key)
+      controller.abort()
     }
   }
 }
@@ -114,6 +121,89 @@ ipcMain.handle('mud:show-modal', async (event, options) => {
   return { confirm: result.response === 0, cancel: showCancel && result.response !== 0 }
 })
 
+function httpStreamKey(webContentsId, id) {
+  return webContentsId + ':' + id
+}
+
+function sendHttpStreamEvent(sender, payload) {
+  if (!sender.isDestroyed()) sender.send('mud:http-stream-event', payload)
+}
+
+ipcMain.on('mud:http-stream-start', async (event, request) => {
+  const id = Number(request && request.id)
+  if (!Number.isSafeInteger(id) || id < 1) return sendHttpStreamEvent(event.sender, { id, error: '无效的流式请求 ID' })
+  let url
+  try {
+    url = new URL(String(request && request.url || ''))
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('仅允许 HTTP/HTTPS 请求')
+  } catch (error) {
+    return sendHttpStreamEvent(event.sender, { id, error: error.message || String(error) })
+  }
+  const key = httpStreamKey(event.sender.id, id)
+  const previous = httpStreams.get(key)
+  if (previous) previous.abort()
+  const controller = new AbortController()
+  httpStreams.set(key, controller)
+  const timeout = Math.max(1000, Math.min(Number(request.timeout) || 180000, 300000))
+  const timer = setTimeout(() => controller.abort(), timeout)
+  let bufferedChunk = ''
+  let chunkTimer = null
+  const flushChunk = () => {
+    if (chunkTimer) clearTimeout(chunkTimer)
+    chunkTimer = null
+    if (!bufferedChunk) return
+    sendHttpStreamEvent(event.sender, { id, phase: 'chunk', chunk: bufferedChunk })
+    bufferedChunk = ''
+  }
+  const queueChunk = (chunk) => {
+    if (!chunk) return
+    bufferedChunk += chunk
+    if (!chunkTimer) chunkTimer = setTimeout(flushChunk, 30)
+  }
+  try {
+    const response = await electronNet.fetch(url.toString(), {
+      method: String(request.method || 'GET').toUpperCase(),
+      headers: request.headers || {},
+      body: request.body || undefined,
+      signal: controller.signal
+    })
+    const headers = {}
+    response.headers.forEach((value, name) => { headers[name] = value })
+    sendHttpStreamEvent(event.sender, { id, phase: 'headers', status: response.status, statusText: response.statusText, headers })
+    if (response.body && response.body.getReader) {
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      while (true) {
+        const result = await reader.read()
+        if (result.done) break
+        const chunk = decoder.decode(result.value, { stream: true })
+        queueChunk(chunk)
+      }
+      const tail = decoder.decode()
+      queueChunk(tail)
+    } else {
+      queueChunk(await response.text())
+    }
+    flushChunk()
+    sendHttpStreamEvent(event.sender, { id, phase: 'end' })
+  } catch (error) {
+    flushChunk()
+    sendHttpStreamEvent(event.sender, { id, error: error && error.message ? error.message : String(error) })
+  } finally {
+    clearTimeout(timer)
+    if (chunkTimer) clearTimeout(chunkTimer)
+    if (httpStreams.get(key) === controller) httpStreams.delete(key)
+  }
+})
+
+ipcMain.on('mud:http-stream-abort', (event, args) => {
+  const id = Number(args && args.id)
+  const key = httpStreamKey(event.sender.id, id)
+  const controller = httpStreams.get(key)
+  httpStreams.delete(key)
+  if (controller) controller.abort()
+})
+
 function safeJsonFileName(value) {
   const base = path.basename(String(value || 'mud-agent-style.json')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').slice(0, 120) || 'mud-agent-style.json'
   return base.toLowerCase().endsWith('.json') ? base : base + '.json'
@@ -121,27 +211,31 @@ function safeJsonFileName(value) {
 
 ipcMain.handle('mud:export-text-file', async (event, options) => {
   const text = String(options && options.text || '')
-  if (!text || Buffer.byteLength(text, 'utf8') > 2 * 1024 * 1024) throw new Error('导出内容为空或超过 2MB')
+  const maxBytes = Math.max(1, Math.min(Number(options && options.maxBytes) || 2 * 1024 * 1024, 8 * 1024 * 1024))
+  if (!text || Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('导出内容为空或超过大小限制')
   const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
-    title: '导出应用样式',
+    title: String(options && options.title || '导出文本文件'),
     defaultPath: path.join(app.getPath('documents'), safeJsonFileName(options && options.suggestedName)),
-    filters: [{ name: 'JSON 样式文件', extensions: ['json'] }]
+    filters: [{ name: String(options && options.filterName || 'JSON 文件'), extensions: ['json'] }]
   })
   if (result.canceled || !result.filePath) return null
   await fs.writeFile(result.filePath, text, 'utf8')
   return { path: result.filePath, name: path.basename(result.filePath) }
 })
 
-ipcMain.handle('mud:import-text-file', async (event) => {
+ipcMain.handle('mud:import-text-file', async (event, options) => {
+  const requestedExtensions = Array.isArray(options && options.extensions) ? options.extensions : ['json']
+  const extensions = requestedExtensions.map((value) => String(value || '').replace(/^\./, '').toLowerCase()).filter((value) => value === '*' || /^[a-z0-9]+$/.test(value)).slice(0, 200)
+  const maxBytes = Math.max(1, Math.min(Number(options && options.maxBytes) || 2 * 1024 * 1024, 8 * 1024 * 1024))
   const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
-    title: '导入应用样式',
+    title: String(options && options.title || '导入文本文件'),
     properties: ['openFile'],
-    filters: [{ name: 'JSON 样式文件', extensions: ['json'] }]
+    filters: [{ name: String(options && options.filterName || '文本文件'), extensions: extensions.length ? extensions : ['txt'] }]
   })
   if (result.canceled || !result.filePaths.length) return null
   const filePath = result.filePaths[0]
   const info = await fs.stat(filePath)
-  if (!info.isFile() || info.size > 2 * 1024 * 1024) throw new Error('样式文件无效或超过 2MB')
+  if (!info.isFile() || info.size > maxBytes) throw new Error('文件无效或超过大小限制')
   return { path: filePath, name: path.basename(filePath), text: await fs.readFile(filePath, 'utf8') }
 })
 

@@ -55,6 +55,14 @@
 			}
 		},
 		{
+			"path": "pages/ai-market/ai-market",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "Skill 与脚本市场",
+				"app-plus": { "bounce": "none" }
+			}
+		},
+		{
 			"path": "pages/ai-guide/ai-guide",
 			"style": {
 				"navigationStyle": "custom",

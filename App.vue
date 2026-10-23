@@ -2,6 +2,7 @@
 	import { state, applyThemeMode } from '@/utils/store.js'
 	import { acquireBackgroundConnectionLocks, releaseBackgroundConnectionLocks } from '@/utils/backgroundConnection.js'
 	import { runtime } from '@/utils/platform/index.js'
+	import { hasConnectedGameSession } from '@/utils/gameSessions.js'
 
 	export default {
 		onLaunch: function() {
@@ -18,7 +19,7 @@
 		onHide: function() {
 			console.log('App Hide')
 			this.setKeepAwake(false)
-			if (state.connected) acquireBackgroundConnectionLocks()
+			if (state.connected || hasConnectedGameSession.value) acquireBackgroundConnectionLocks()
 		},
 		methods: {
 			setKeepAwake(enabled) {

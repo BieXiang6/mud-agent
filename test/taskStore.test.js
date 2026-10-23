@@ -23,3 +23,19 @@ test('persists task-level activated skills and tool groups without duplicates', 
   assert.deepEqual(loaded.activatedToolGroups, ['script'])
   resetPlatform()
 })
+
+test('persists normalized text attachments with conversation turns', () => {
+  configurePlatform({
+    name: 'task-store-attachment-test',
+    openSocket() {},
+    getStorageSync(key) { return storage.get(key) },
+    setStorageSync(key, value) { storage.set(key, value) },
+    removeStorageSync(key) { storage.delete(key) }
+  })
+  const task = createStoredTask('model-1')
+  task.conversation.push({ role: 'user', text: '总结', attachments: [{ name: 'notes.md', text: 'hello' }] })
+  saveStoredTasks([task])
+  const attachment = loadStoredTasks()[0].conversation[0].attachments[0]
+  assert.deepEqual(attachment, { name: 'notes.md', text: 'hello', size: 5 })
+  resetPlatform()
+})

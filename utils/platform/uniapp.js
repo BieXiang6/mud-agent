@@ -64,7 +64,7 @@ function browserImportText(options) {
     input.addEventListener('change', async () => {
       const file = input.files && input.files[0]
       if (!file) return finish(null)
-      if (file.size > Number(options && options.maxBytes || 2 * 1024 * 1024)) return finish(null, new Error('样式文件超过大小限制'))
+      if (file.size > Number(options && options.maxBytes || 2 * 1024 * 1024)) return finish(null, new Error('文件超过大小限制'))
       try { finish({ name: file.name, path: file.name, text: await file.text() }) } catch (error) { finish(null, error) }
     })
     input.click()
@@ -96,7 +96,7 @@ function writePlusText(entry, text) {
 
 function readPlusText(nativeRuntime, entry, maxBytes) {
   return new Promise((resolve, reject) => entry.file((file) => {
-    if (Number(file.size) > maxBytes) return reject(new Error('样式文件超过大小限制'))
+    if (Number(file.size) > maxBytes) return reject(new Error('文件超过大小限制'))
     const reader = new nativeRuntime.io.FileReader()
     reader.onerror = reject
     reader.onloadend = () => resolve(String(reader.result || ''))
@@ -132,7 +132,7 @@ function readUniText(runtime, path, maxBytes) {
     encoding: 'utf8',
     success: (result) => {
       const text = String(!result || result.data == null ? '' : result.data)
-      if (utf8ByteLength(text) > maxBytes) reject(new Error('样式文件超过大小限制'))
+      if (utf8ByteLength(text) > maxBytes) reject(new Error('文件超过大小限制'))
       else resolve(text)
     },
     fail: reject
@@ -159,7 +159,7 @@ function filePickerError(error) {
 
 function selectedFileReadError(error) {
   const message = String(error && (error.errMsg || error.message) || error || '未知错误')
-  return new Error('已选择文件，但无法读取其内容：' + message + '。无需申请“所有文件访问”权限，请尝试从系统“下载”或“文档”目录选择 JSON。')
+  return new Error('已选择文件，但无法读取其文本内容：' + message + '。无需申请“所有文件访问”权限，请尝试从系统“下载”或“文档”目录选择文件。')
 }
 
 let nativePickerActive = false
@@ -203,11 +203,11 @@ function readAndroidContentText(android, activity, uri, maxBytes) {
       if (line == null) break
       const value = String(line)
       chars += value.length + 1
-      if (chars > maxBytes) throw new Error('样式文件超过大小限制')
+      if (chars > maxBytes) throw new Error('文件超过大小限制')
       lines.push(value)
     }
     const text = lines.join('\n')
-    if (utf8ByteLength(text) > maxBytes) throw new Error('样式文件超过大小限制')
+    if (utf8ByteLength(text) > maxBytes) throw new Error('文件超过大小限制')
     return text
   } finally {
     try { if (reader) invokeAndroid(android, reader, 'close') } catch (_) {}
@@ -238,7 +238,7 @@ function chooseAndroidNativeFile(nativeRuntime, options) {
       previousHandler = activity.onActivityResult
       const intent = android.newObject('android.content.Intent', android.getAttribute(Intent, 'ACTION_OPEN_DOCUMENT') || 'android.intent.action.OPEN_DOCUMENT')
       invokeAndroid(android, intent, 'addCategory', android.getAttribute(Intent, 'CATEGORY_OPENABLE') || 'android.intent.category.OPENABLE')
-      invokeAndroid(android, intent, 'setType', 'application/json')
+      invokeAndroid(android, intent, 'setType', String(options && options.mimeType || 'application/json'))
       activity.onActivityResult = (code, resultCode, data) => {
         if (Number(code) !== requestCode) {
           if (typeof previousHandler === 'function') previousHandler(code, resultCode, data)
@@ -249,7 +249,7 @@ function chooseAndroidNativeFile(nativeRuntime, options) {
           const uri = invokeAndroid(android, data, 'getData')
           if (!uri) throw new Error('系统文件浏览器未返回文件 URI')
           const uriText = String(invokeAndroid(android, uri, 'toString') || uri)
-          const fallbackName = safeJsonFileName(uriText)
+          const fallbackName = String(uriText).split('/').pop() || '未命名.txt'
           const name = androidUriName(android, activity, uri, fallbackName)
           const text = readAndroidContentText(android, activity, uri, Number(options && options.maxBytes || 2 * 1024 * 1024))
           finish({ name, path: uriText, text })
@@ -263,33 +263,40 @@ function chooseAndroidNativeFile(nativeRuntime, options) {
 }
 
 function chooseUniFile(runtime, nativeRuntime, options) {
-  return new Promise((resolve, reject) => runtime.chooseFile({
-    count: 1,
-    type: 'all',
-    extension: ['.json'],
-    success: async (result) => {
-      try {
-        const selected = result.tempFiles && result.tempFiles[0]
-        const path = result.tempFilePaths && result.tempFilePaths[0] || selected && selected.path
-        if (!path) throw new Error('文件浏览器未返回文件地址')
-        const name = selected && selected.name || safeJsonFileName(path)
-        const maxBytes = Number(options && options.maxBytes || 2 * 1024 * 1024)
-        if (selected && Number(selected.size) > maxBytes) throw new Error('样式文件超过大小限制')
-        let text
-        if (runtime && typeof runtime.getFileSystemManager === 'function') {
-          try { text = await readUniText(runtime, path, maxBytes) } catch (error) {
-            if (/^content:/i.test(path)) throw error
+  const requestedExtensions = Array.isArray(options && options.extensions) ? options.extensions : ['json']
+  const extensions = requestedExtensions
+    .filter((value) => String(value || '').replace(/^\./, '') !== '*')
+    .map((value) => '.' + String(value || '').replace(/^\./, ''))
+  return new Promise((resolve, reject) => {
+    const chooseOptions = {
+      count: 1,
+      type: 'all',
+      success: async (result) => {
+        try {
+          const selected = result.tempFiles && result.tempFiles[0]
+          const path = result.tempFilePaths && result.tempFilePaths[0] || selected && selected.path
+          if (!path) throw new Error('文件浏览器未返回文件地址')
+          const name = selected && selected.name || safeJsonFileName(path)
+          const maxBytes = Number(options && options.maxBytes || 2 * 1024 * 1024)
+          if (selected && Number(selected.size) > maxBytes) throw new Error('文件超过大小限制')
+          let text
+          if (runtime && typeof runtime.getFileSystemManager === 'function') {
+            try { text = await readUniText(runtime, path, maxBytes) } catch (error) {
+              if (/^content:/i.test(path)) throw error
+            }
           }
-        }
-        if (text == null) {
-          const entry = await resolvePlusEntry(nativeRuntime, path)
-          text = await readPlusText(nativeRuntime, entry, maxBytes)
-        }
-        resolve({ name, path, text })
-      } catch (error) { reject(selectedFileReadError(error)) }
-    },
-    fail: (error) => /cancel/i.test(String(error && error.errMsg || '')) ? resolve(null) : reject(filePickerError(error))
-  }))
+          if (text == null) {
+            const entry = await resolvePlusEntry(nativeRuntime, path)
+            text = await readPlusText(nativeRuntime, entry, maxBytes)
+          }
+          resolve({ name, path, text })
+        } catch (error) { reject(selectedFileReadError(error)) }
+      },
+      fail: (error) => /cancel/i.test(String(error && error.errMsg || '')) ? resolve(null) : reject(filePickerError(error))
+    }
+    if (extensions.length) chooseOptions.extension = extensions
+    runtime.chooseFile(chooseOptions)
+  })
 }
 
 export function createUniappPlatform() {

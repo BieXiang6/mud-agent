@@ -1,47 +1,13 @@
-import { getRegionContent, invokeGameAction, sendGameCommand } from './gameBridge.js'
-import { latestEventSeq, queryGameEvents, subscribeGameEvents, waitForGameEvent } from './eventJournal.js'
+import { validateScriptSource } from './scriptValidation.js'
+export { validateScriptSource } from './scriptValidation.js'
 import { getStoredScript } from './scriptStore.js'
+import { getActiveGameBridge, getActiveSessionJournal } from '../gameSessions.js'
+import { state } from '../store.js'
 
-const MAX_TIMEOUT_MS = 10 * 60 * 1000
 const MAX_RESULT_CHARS = 100000
 const MAX_LOGS = 100
 const jobs = new Map()
 let nextRun = 0
-
-const FORBIDDEN_WORDS = [
-  'globalThis', 'window', 'document', 'self', 'global', 'process', 'require',
-  'uni', 'plus', 'wx', 'fetch', 'XMLHttpRequest', 'WebSocket', 'localStorage',
-  'sessionStorage', 'indexedDB', 'Worker', 'SharedWorker', 'WebAssembly', 'Function', 'eval'
-]
-
-function maskedSource(source) {
-  return String(source)
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/[^\r\n]*/g, ' ')
-    .replace(/'(?:\\.|[^'\\])*'/g, "''")
-    .replace(/"(?:\\.|[^"\\])*"/g, '""')
-    .replace(/`(?:\\.|[^`\\])*`/g, '``')
-}
-
-export function validateScriptSource(source) {
-  const text = String(source || '')
-  if (!text.trim()) throw new Error('脚本源码不能为空')
-  if (text.length > 40000) throw new Error('脚本源码不能超过 40000 字符')
-  const masked = maskedSource(text)
-  for (const word of FORBIDDEN_WORDS) {
-    if (new RegExp('\\b' + word + '\\b').test(masked)) throw new Error('脚本不能访问受限全局对象：' + word)
-  }
-  if (/\b(?:constructor|prototype|__proto__)\b/i.test(text.replace(/["'`+\s]/g, ''))) {
-    throw new Error('脚本不能访问原型或构造器')
-  }
-  if (/\bimport\s*(?:\(|[\w*{])|\bexport\s+|\bwith\s*\(|\bdebugger\b/.test(masked)) {
-    throw new Error('脚本不能使用 import/export、with 或 debugger')
-  }
-  if (/\b(?:while|do|for)\b/.test(masked)) {
-    throw new Error('为避免阻塞界面，脚本不能使用同步循环；请使用数组方法、game.on、game.wait 或 game.sleep')
-  }
-  return text
-}
 
 function abortError(message = '脚本运行已取消') {
   const error = new Error(message)
@@ -90,6 +56,8 @@ function safeJob(job) {
     scriptId: job.scriptId,
     scriptName: job.scriptName,
     functionName: job.functionName,
+    origin: job.origin || 'manual',
+    sessionId: job.sessionId || '',
     status: job.status,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt || 0,
@@ -97,6 +65,23 @@ function safeJob(job) {
     error: job.error || '',
     logs: job.logs.slice()
   }, '运行结果')
+}
+
+function safeJobSummary(job) {
+  return jsonClone({
+    id: job.id,
+    scriptId: job.scriptId,
+    scriptName: job.scriptName,
+    functionName: job.functionName,
+    origin: job.origin || 'manual',
+    sessionId: job.sessionId || '',
+    status: job.status,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt || 0,
+    error: job.error || '',
+    logCount: job.logs.length,
+    latestLog: job.logs.length ? job.logs[job.logs.length - 1] : ''
+  }, '运行摘要')
 }
 
 function buildGameApi(job, signal, cleanups) {
@@ -110,27 +95,27 @@ function buildGameApi(job, signal, cleanups) {
   const api = {
     get(region = 'all', limit = 50) {
       ensureActive()
-      return jsonClone(getRegionContent(region, limit), '游戏区域')
+      return jsonClone(job.bridge.getRegionContent(region, limit), '游戏区域')
     },
     events(options = {}) {
       ensureActive()
-      return jsonClone(queryGameEvents(jsonClone(options, '事件查询参数')), '游戏事件')
+      return jsonClone(job.journal.queryGameEvents(jsonClone(options, '事件查询参数')), '游戏事件')
     },
     latestSeq() {
       ensureActive()
-      return latestEventSeq()
+      return job.journal.latestEventSeq()
     },
     async wait(options = {}) {
       ensureActive()
-      return jsonClone(await waitForGameEvent(jsonClone(options, '等待参数'), signal), '等待结果')
+      return jsonClone(await job.journal.waitForGameEvent(jsonClone(options, '等待参数'), signal), '等待结果')
     },
     async send(command, options = {}) {
       ensureActive()
-      return jsonClone(await sendGameCommand(String(command || ''), jsonClone(options, '发送参数'), signal), '发送结果')
+      return jsonClone(await job.bridge.sendGameCommand(String(command || ''), jsonClone(options, '发送参数'), signal), '发送结果')
     },
     async invoke(actionId, text = '') {
       ensureActive()
-      return jsonClone(await invokeGameAction(String(actionId || ''), String(text || ''), signal), '动作结果')
+      return jsonClone(await job.bridge.invokeGameAction(String(actionId || ''), String(text || ''), signal), '动作结果')
     },
     sleep(ms) {
       ensureActive()
@@ -142,7 +127,7 @@ function buildGameApi(job, signal, cleanups) {
       const values = Array.isArray(regions) ? regions : [regions]
       const regionSet = new Set(values.map((item) => String(item || '').trim()).filter(Boolean))
       if (!regionSet.size) throw new Error('game.on 至少需要一个区域')
-      const unsubscribe = subscribeGameEvents((event) => {
+      const unsubscribe = job.journal.subscribeGameEvents((event) => {
         if (signal.aborted || !regionSet.has(event.region)) return
         Promise.resolve().then(() => handler(jsonClone(event, '监听事件'))).catch((error) => log('监听器错误:', error && error.message || String(error)))
       })
@@ -162,7 +147,7 @@ function buildGameApi(job, signal, cleanups) {
   return Object.freeze(api)
 }
 
-function compileScript(source) {
+export function compileScript(source) {
   const checked = validateScriptSource(source)
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
   return new AsyncFunction(
@@ -175,16 +160,16 @@ function compileScript(source) {
   )
 }
 
-async function executeJob(job, script, args, timeoutMs) {
+async function executeJob(job, script, args) {
+  if (job.status === 'cancelled') {
+    job.finishedAt = Date.now()
+    return safeJob(job)
+  }
   const controller = new AbortController()
   const cleanups = []
   job.controller = controller
   job.status = 'running'
   job.startedAt = Date.now()
-  const timeout = setTimeout(() => {
-    job.abortReason = 'timeout'
-    controller.abort()
-  }, timeoutMs)
   try {
     const exports = Object.create(null)
     const module = { exports }
@@ -201,14 +186,13 @@ async function executeJob(job, script, args, timeoutMs) {
     job.status = 'completed'
   } catch (error) {
     if (controller.signal.aborted) {
-      job.status = job.abortReason === 'timeout' ? 'timed_out' : 'cancelled'
-      job.error = job.status === 'timed_out' ? '脚本执行超时' : '脚本运行已取消'
+      job.status = 'cancelled'
+      job.error = '脚本运行已取消'
     } else {
       job.status = 'failed'
       job.error = error && error.message ? error.message : String(error)
     }
   } finally {
-    clearTimeout(timeout)
     for (const cleanup of cleanups.splice(0)) {
       try { cleanup() } catch (_) {}
     }
@@ -230,28 +214,55 @@ export async function runStoredScript(options = {}) {
   const args = options.args == null ? [] : options.args
   if (!Array.isArray(args) || args.length > 20) throw new Error('args 必须是最多 20 项的数组')
   validateScriptSource(script.source)
-  const timeoutMs = Math.max(200, Math.min(Number(options.timeoutMs || 60000), MAX_TIMEOUT_MS))
   const id = 'run-' + Date.now().toString(36) + '-' + (++nextRun).toString(36)
   const job = {
     id, scriptId: script.id, scriptName: script.name, functionName,
+    bridge: options.session ? options.session.bridge : getActiveGameBridge(),
+    journal: options.session ? options.session.journal : getActiveSessionJournal(),
+    sessionId: options.session ? options.session.gameState.sessionId : state.sessionId,
+    origin: options.origin === 'agent' ? 'agent' : 'manual',
     status: 'queued', startedAt: 0, finishedAt: 0, result: null, error: '', logs: []
   }
   jobs.set(id, job)
-  const completion = Promise.resolve().then(() => executeJob(job, script, args, timeoutMs))
+  const completion = Promise.resolve().then(() => executeJob(job, script, args))
   job.completion = completion
+  const externalSignal = options.signal
+  if (externalSignal) {
+    const abort = () => cancelScriptRun(id)
+    if (externalSignal.aborted) abort()
+    else {
+      externalSignal.addEventListener('abort', abort, { once: true })
+      const cleanup = () => externalSignal.removeEventListener('abort', abort)
+      completion.then(cleanup, cleanup)
+    }
+  }
   if (options.waitForResult === false) return { id, status: 'queued', nonBlocking: true }
   return completion
 }
 
-export function getScriptRun(runId) {
+export function getScriptRun(runId, sessionId) {
   const job = jobs.get(String(runId || ''))
   if (!job) throw new Error('脚本运行不存在或已过期：' + runId)
+  if (sessionId != null && job.sessionId !== sessionId) throw new Error('该脚本运行属于其他账号')
   return safeJob(job)
 }
 
-export function cancelScriptRun(runId) {
+export function listScriptRuns(options = {}) {
+  const limit = Math.max(1, Math.min(Number(options.limit) || 50, 100))
+  return Array.from(jobs.values())
+    .sort((left, right) => {
+      const leftActive = ['queued', 'running'].includes(left.status) ? 1 : 0
+      const rightActive = ['queued', 'running'].includes(right.status) ? 1 : 0
+      return rightActive - leftActive || Math.max(right.startedAt, right.finishedAt) - Math.max(left.startedAt, left.finishedAt)
+    })
+    .slice(0, limit)
+    .map(safeJobSummary)
+}
+
+export function cancelScriptRun(runId, sessionId) {
   const job = jobs.get(String(runId || ''))
   if (!job) throw new Error('脚本运行不存在或已过期：' + runId)
+  if (sessionId != null && job.sessionId !== sessionId) throw new Error('该脚本运行属于其他账号')
   if (!['queued', 'running'].includes(job.status)) return safeJob(job)
   job.abortReason = 'cancelled'
   if (job.controller) job.controller.abort()
@@ -259,4 +270,4 @@ export function cancelScriptRun(runId) {
   return safeJob(job)
 }
 
-export default { validateScriptSource, runStoredScript, getScriptRun, cancelScriptRun }
+export default { validateScriptSource, runStoredScript, getScriptRun, listScriptRuns, cancelScriptRun }

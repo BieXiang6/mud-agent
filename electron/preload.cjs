@@ -18,7 +18,12 @@ contextBridge.exposeInMainWorld('mudElectron', {
     importText(options) { return ipcRenderer.invoke('mud:import-text-file', options) }
   },
   http: {
-    fetch(request) { return ipcRenderer.invoke('mud:http-fetch', request) }
+    fetch(request) { return ipcRenderer.invoke('mud:http-fetch', request) },
+    startStream(request) { ipcRenderer.send('mud:http-stream-start', request) },
+    abortStream(id) { ipcRenderer.send('mud:http-stream-abort', { id }) },
+    onStream(callback) {
+      ipcRenderer.on('mud:http-stream-event', (_event, payload) => callback(payload))
+    }
   },
   tcp: {
     connect(id, host, port) { return ipcRenderer.invoke('mud:tcp-connect', { id, host, port }) },

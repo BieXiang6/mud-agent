@@ -24,7 +24,7 @@ function normalizeScript(value, existing = null) {
     description: String(value && value.description || '').trim().slice(0, 500),
     source: cleanText(value && value.source, '脚本源码', MAX_SOURCE_CHARS),
     createdAt,
-    updatedAt: now
+    updatedAt: existing ? Math.max(now, existing.updatedAt + 1) : now
   }
 }
 
@@ -65,6 +65,10 @@ export function getStoredScript(idOrName) {
   return script ? { ...script } : null
 }
 
+export function getAllStoredScripts() {
+  return readScripts().map((script) => ({ ...script }))
+}
+
 export function saveStoredScript(value) {
   const scripts = readScripts()
   const requestedId = String(value && value.id || '').trim()
@@ -90,6 +94,27 @@ export function deleteStoredScript(idOrName) {
   return true
 }
 
+export function replaceStoredScripts(values) {
+  if (!Array.isArray(values)) throw new Error('脚本集合格式无效')
+  if (values.length > MAX_SCRIPTS) throw new Error('脚本数量不能超过 ' + MAX_SCRIPTS)
+  const ids = new Set()
+  const names = new Set()
+  const normalized = values.map((value) => {
+    const script = normalizeScript(value)
+    script.id = String(value && value.id || script.id)
+    script.createdAt = Number(value && value.createdAt) || script.createdAt
+    script.updatedAt = Number(value && value.updatedAt) || script.updatedAt
+    const lowerName = script.name.toLowerCase()
+    if (ids.has(script.id)) throw new Error('脚本 ID 重复：' + script.id)
+    if (names.has(lowerName)) throw new Error('脚本名称重复：' + script.name)
+    ids.add(script.id)
+    names.add(lowerName)
+    return script
+  })
+  persist(normalized)
+  return normalized.map((script) => ({ ...script }))
+}
+
 export const scriptStoreLimits = Object.freeze({ maxScripts: MAX_SCRIPTS, maxSourceChars: MAX_SOURCE_CHARS })
 
-export default { listStoredScripts, getStoredScript, saveStoredScript, deleteStoredScript, scriptStoreLimits }
+export default { listStoredScripts, getStoredScript, getAllStoredScripts, saveStoredScript, deleteStoredScript, replaceStoredScripts, scriptStoreLimits }

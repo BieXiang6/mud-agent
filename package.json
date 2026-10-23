@@ -1,6 +1,6 @@
 {
   "name": "mud-agent-client",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,8 +8,12 @@
     "check:skills": "node scripts/generate-builtin-skills.mjs --check",
     "postinstall": "node scripts/patch-typebox.mjs",
     "server": "node server/index.js",
+    "market:admin": "node scripts/market-admin.mjs",
     "test": "node --test",
     "test:electron:quick": "electron scripts/electron-quick-smoke.cjs",
+    "test:electron:accounts": "electron scripts/electron-multi-account-smoke.cjs",
+    "test:electron:market": "electron scripts/electron-market-smoke.cjs",
+    "test:electron:agents": "electron scripts/electron-multi-account-smoke.cjs --agents",
     "electron:dev": "node scripts/build-electron.mjs --run",
     "build:electron:dir": "node scripts/build-electron.mjs --dir",
     "build:electron": "node scripts/build-electron.mjs"

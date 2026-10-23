@@ -51,7 +51,7 @@
         </picker>
 
         <text class="label required">模型 ID</text>
-        <input v-model="state.draft.model" class="input" placeholder="deepseek-v4-flash" />
+        <input v-model="state.draft.model" class="input" placeholder="deepseek-flash" />
 
         <view class="field-grid">
           <view class="field">

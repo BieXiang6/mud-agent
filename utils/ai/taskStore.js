@@ -4,12 +4,16 @@ import { runtime } from '../platform/index.js'
 const TASKS_STORAGE_KEY = 'mud_ai_tasks_v1'
 const MAX_TASKS = 30
 
-function storageGet() {
-  return runtime.getStorageSync(TASKS_STORAGE_KEY)
+function storageKey(accountId = '') {
+  return accountId ? 'mud_ai_account_tasks_v1:' + encodeURIComponent(accountId) : TASKS_STORAGE_KEY
 }
 
-function storageSet(value) {
-  runtime.setStorageSync(TASKS_STORAGE_KEY, value)
+function storageGet(accountId) {
+  return runtime.getStorageSync(storageKey(accountId))
+}
+
+function storageSet(value, accountId) {
+  runtime.setStorageSync(storageKey(accountId), value)
 }
 
 function taskId() {
@@ -57,8 +61,8 @@ function normalizeTask(task) {
   }
 }
 
-export function loadStoredTasks() {
-  const raw = storageGet()
+export function loadStoredTasks(accountId = '') {
+  const raw = storageGet(accountId)
   if (!raw) return []
   try {
     const parsed = JSON.parse(String(raw))
@@ -68,8 +72,8 @@ export function loadStoredTasks() {
   }
 }
 
-export function saveStoredTasks(tasks) {
+export function saveStoredTasks(tasks, accountId = '') {
   const normalized = tasks.map(normalizeTask).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_TASKS)
-  storageSet(JSON.stringify(normalized))
+  storageSet(JSON.stringify(normalized), accountId)
   return normalized
 }

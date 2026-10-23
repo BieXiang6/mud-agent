@@ -1,11 +1,12 @@
 // 服务器数据协议解析 (与原版 www/main.js 的 writeServerData 对应)
 // 所有内容按 \n 分行后逐行进入 handleLine
 import { parseRich, HR_LINE } from './ansi.js'
-import { state, enterGame, resetRoom } from './store.js'
+import { state as defaultState, enterGame as enterDefaultGame, resetRoom as resetDefaultRoom } from './store.js'
 import { log, dbg, escapeStr, isDebugEnabled } from './log.js'
-import { recordGameEvent } from './ai/eventJournal.js'
+import { recordGameEvent as defaultRecordGameEvent } from './ai/eventJournal.js'
 import { buildActionDialog } from './dialog.js'
 
+export function createProtocol({ state, enterGame, resetRoom, recordGameEvent }) {
 const ESC = String.fromCharCode(27)
 
 // proto 需要向服务器回写指令 (\x1b014 回显), 由 net.js 注入, 避免循环依赖
@@ -109,22 +110,22 @@ function flushMessageBatch() {
   }
 }
 
-export function beginMessageBatch() {
+function beginMessageBatch() {
   messageBatchDepth++
 }
 
-export function endMessageBatch(flush = true) {
+function endMessageBatch(flush = true) {
   if (messageBatchDepth > 0) messageBatchDepth--
   if (messageBatchDepth === 0 && flush) flushMessageBatch()
 }
 
-export function resetMessageBatch() {
+function resetMessageBatch() {
   messageBatchDepth = 0
   pendingScreen = []
   pendingChat = []
   pendingLong = []
 }
-export function setSend(fn) {
+function setSend(fn) {
   sendFn = fn
 }
 function echoCmd(text) {
@@ -263,7 +264,7 @@ function writeChat(t) {
 }
 
 // 动作按钮点击后服务器回传的 \x1b020 数据, 需要在客户端直接弹出 (对应原版 cmdsc)
-export function openPop(data) {
+function openPop(data) {
   writePop(data)
 }
 
@@ -582,7 +583,7 @@ function handleLineInternal(line) {
   else { dbg('PROTO', '→ 默认主输出 writeScreen'); writeScreen(e) }
 }
 
-export function handleLine(line, perf = null) {
+function handleLine(line, perf = null) {
   const protocol = line && line.charCodeAt(0) === 27 && line.length >= 4
     ? line.slice(1, 4)
     : 'text'
@@ -595,4 +596,15 @@ export function handleLine(line, perf = null) {
   }
 }
 
-export default { handleLine, setSend, openPop, beginMessageBatch, endMessageBatch }
+
+
+return { beginMessageBatch, endMessageBatch, resetMessageBatch, setSend, openPop, handleLine }
+}
+const defaultProtocol = createProtocol({state: defaultState, enterGame: enterDefaultGame, resetRoom: resetDefaultRoom, recordGameEvent: defaultRecordGameEvent})
+export function beginMessageBatch(...args) { return defaultProtocol.beginMessageBatch(...args) }
+export function endMessageBatch(...args) { return defaultProtocol.endMessageBatch(...args) }
+export function resetMessageBatch(...args) { return defaultProtocol.resetMessageBatch(...args) }
+export function setSend(...args) { return defaultProtocol.setSend(...args) }
+export function openPop(...args) { return defaultProtocol.openPop(...args) }
+export function handleLine(...args) { return defaultProtocol.handleLine(...args) }
+export default defaultProtocol

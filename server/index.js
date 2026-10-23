@@ -2,14 +2,16 @@ import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { loadEnvFiles } from './env.js'
+import path from 'node:path'
+import { createMarketplaceApi } from './marketplaceApi.js'
 
 const DEFAULT_PORT = 4058
 const DATA_URL = new URL('./release-data.json', import.meta.url)
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Origin': '*',
     'Cache-Control': 'no-store',
     'Content-Type': 'application/json; charset=utf-8'
@@ -28,10 +30,17 @@ export function parseReleaseData(raw) {
   return JSON.parse(String(raw).replace(/^\uFEFF/, ''))
 }
 
-export function createReleaseServer({ dataUrl = DATA_URL } = {}) {
+export function createReleaseServer({ dataUrl = DATA_URL, marketDataDir = process.env.MARKET_DATA_DIR || path.resolve('server/data/market'), marketClock = Date.now } = {}) {
+  const handleMarket = createMarketplaceApi({ dataDir: marketDataDir, clock: marketClock })
   return createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
       sendJson(res, 204, null)
+      return
+    }
+
+    const url = new URL(req.url || '/', 'http://localhost')
+    if (url.pathname.startsWith('/api/market/')) {
+      await handleMarket(req, res, url, sendJson)
       return
     }
 
@@ -68,7 +77,7 @@ export function startReleaseServer(options = {}) {
   loadEnvFiles()
   const port = options.port ?? (Number(process.env.PORT) || DEFAULT_PORT)
   const host = options.host ?? (process.env.HOST || '0.0.0.0')
-  const server = createReleaseServer()
+  const server = createReleaseServer(options)
   server.listen(port, host, () => {
     console.log(`Release API listening on http://${host}:${port}`)
   })

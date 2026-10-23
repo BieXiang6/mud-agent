@@ -3,9 +3,19 @@
 /release/
 /unpackage/
 /build/
+/server/data/
 /nativeplugins/MudAgent-TCP/android/libs/*.jar
 
 # Local environment and credentials. Keep only the public template tracked.
 .env
 .env.*
 !.env.example
+
+# Local signing credentials and exported market identities.
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+mud-market-identity*.json

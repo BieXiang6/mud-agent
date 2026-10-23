@@ -7,6 +7,7 @@ test('injects script tools for authoring, management, and function execution', (
   assert.equal(shouldInjectScriptTools('运行脚本里的 main 函数并传参'), true)
   assert.equal(shouldInjectScriptTools('使用 write-game-script 监听聊天'), true)
   assert.equal(shouldInjectScriptTools('停止 run-m123-1'), true)
+  assert.equal(shouldInjectScriptTools('edit_game_script'), true)
 })
 
 test('keeps script schemas out of ordinary game tasks and supports follow-ups', () => {
